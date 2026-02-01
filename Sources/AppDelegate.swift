@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         rebuildMenu()
         refreshExternalStates()
+        maybePromptApplicationsSymlink()
     }
 
     private func rebuildMenu() {
@@ -73,6 +74,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
         menu.addItem(MenuUI.sectionHeader("App"))
+
+        if shouldShowApplicationsSymlinkAction() {
+            let symlinkItem = MenuUI.menuItem(title: "Add to /Applications", action: #selector(addApplicationsSymlink(_:)), target: self, symbolName: "link.badge.plus")
+            menu.addItem(symlinkItem)
+        }
 
         let quitItem = MenuUI.menuItem(title: "Quit", action: #selector(quitApp(_:)), target: self, symbolName: "power")
         quitItem.keyEquivalent = "q"
@@ -359,6 +365,58 @@ private extension AppDelegate {
             return "\(config.services.count) services"
         }
         return parts.joined(separator: " / ")
+    }
+
+    func shouldShowApplicationsSymlinkAction() -> Bool {
+        !applicationsItemExists()
+    }
+
+    func applicationsInstallURL() -> URL {
+        let bundleName = Bundle.main.bundleURL.lastPathComponent
+        return URL(fileURLWithPath: "/Applications").appendingPathComponent(bundleName)
+    }
+
+    func applicationsItemExists() -> Bool {
+        FileManager.default.fileExists(atPath: applicationsInstallURL().path)
+    }
+
+    func maybePromptApplicationsSymlink() {
+        guard !config.didPromptApplicationsSymlink else { return }
+        guard shouldShowApplicationsSymlinkAction() else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Add to /Applications?"
+        alert.informativeText = "Create a symlink in /Applications for easier launching."
+        alert.addButton(withTitle: "Add Symlink")
+        alert.addButton(withTitle: "Not Now")
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+
+        config.didPromptApplicationsSymlink = true
+        store.save(config)
+
+        if response == .alertFirstButtonReturn {
+            addApplicationsSymlink(nil)
+        }
+    }
+
+    @objc func addApplicationsSymlink(_ sender: NSMenuItem?) {
+        let fm = FileManager.default
+        let targetURL = applicationsInstallURL()
+        if fm.fileExists(atPath: targetURL.path) {
+            UIFlows.showError(message: "An item already exists at \(targetURL.path).")
+            rebuildMenu()
+            return
+        }
+
+        do {
+            try fm.createSymbolicLink(at: targetURL, withDestinationURL: Bundle.main.bundleURL)
+        } catch {
+            UIFlows.showError(message: "Could not create symlink: \(error.localizedDescription)")
+            return
+        }
+
+        rebuildMenu()
     }
     func openUrlGroups(for service: ServiceConfig, state: ServiceState) -> (local: [String], lan: [String]) {
         let localUrls = service.effectiveOpenUrls()

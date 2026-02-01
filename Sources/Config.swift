@@ -8,6 +8,7 @@ struct AppConfig: Codable {
     var pathAdditions: [String]
     var healthTimeoutSeconds: TimeInterval
     var healthIntervalSeconds: TimeInterval
+    var didPromptApplicationsSymlink: Bool
 
     static let currentVersion = 1
 
@@ -23,8 +24,48 @@ struct AppConfig: Codable {
                 NSHomeDirectory() + "/.local/bin"
             ],
             healthTimeoutSeconds: 30,
-            healthIntervalSeconds: 1
+            healthIntervalSeconds: 1,
+            didPromptApplicationsSymlink: false
         )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case services
+        case defaultShell
+        case pathAdditions
+        case healthTimeoutSeconds
+        case healthIntervalSeconds
+        case didPromptApplicationsSymlink
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? AppConfig.currentVersion
+        services = try container.decodeIfPresent([ServiceConfig].self, forKey: .services) ?? []
+        defaultShell = try container.decodeIfPresent(String.self, forKey: .defaultShell) ?? "/bin/zsh"
+        pathAdditions = try container.decodeIfPresent([String].self, forKey: .pathAdditions) ?? []
+        healthTimeoutSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .healthTimeoutSeconds) ?? 30
+        healthIntervalSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .healthIntervalSeconds) ?? 1
+        didPromptApplicationsSymlink = try container.decodeIfPresent(Bool.self, forKey: .didPromptApplicationsSymlink) ?? false
+    }
+
+    init(
+        version: Int,
+        services: [ServiceConfig],
+        defaultShell: String,
+        pathAdditions: [String],
+        healthTimeoutSeconds: TimeInterval,
+        healthIntervalSeconds: TimeInterval,
+        didPromptApplicationsSymlink: Bool
+    ) {
+        self.version = version
+        self.services = services
+        self.defaultShell = defaultShell
+        self.pathAdditions = pathAdditions
+        self.healthTimeoutSeconds = healthTimeoutSeconds
+        self.healthIntervalSeconds = healthIntervalSeconds
+        self.didPromptApplicationsSymlink = didPromptApplicationsSymlink
     }
 }
 
