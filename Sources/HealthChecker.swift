@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 final class HealthChecker {
@@ -91,10 +92,12 @@ final class HealthChecker {
             self.inFlight.insert(token)
 
             self.detectSchemeOnce(host: host, port: port) { scheme in
-                self.inFlight.remove(token)
-                if let scheme {
-                    self.cancel(token)
-                    completion(scheme)
+                self.queue.async {
+                    self.inFlight.remove(token)
+                    if let scheme {
+                        self.cancel(token)
+                        completion(scheme)
+                    }
                 }
             }
         }
@@ -127,18 +130,15 @@ final class HealthChecker {
             request.httpMethod = "GET"
             request.timeoutInterval = 2
             let session = session(for: url)
-            let task = session.dataTask(with: request) { _, response, error in
+            let task = session.dataTask(with: request) { [weak self] _, response, error in
                 defer { group.leave() }
-                if error != nil {
-                    lock.lock()
-                    allOK = false
-                    lock.unlock()
-                    return
-                }
-                guard response is HTTPURLResponse else {
-                    lock.lock()
-                    allOK = false
-                    lock.unlock()
+                if error != nil || !(response is HTTPURLResponse) {
+                    let fallbackOK = self?.tcpFallback(url: url) ?? false
+                    if !fallbackOK {
+                        lock.lock()
+                        allOK = false
+                        lock.unlock()
+                    }
                     return
                 }
             }
@@ -196,6 +196,77 @@ final class HealthChecker {
             return insecureSession
         }
         return URLSession.shared
+    }
+
+    private func tcpFallback(url: URL) -> Bool {
+        guard let host = url.host else { return false }
+        let port: Int
+        if let urlPort = url.port {
+            port = urlPort
+        } else if url.scheme == "https" {
+            port = 443
+        } else {
+            port = 80
+        }
+        return tcpConnect(host: host, port: port, timeout: 1.5)
+    }
+
+    private func tcpConnect(host: String, port: Int, timeout: TimeInterval) -> Bool {
+        var hints = addrinfo(
+            ai_flags: 0,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: 0,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+
+        var infoPtr: UnsafeMutablePointer<addrinfo>?
+        let portString = String(port)
+        let err = getaddrinfo(host, portString, &hints, &infoPtr)
+        if err != 0 {
+            return false
+        }
+        defer { freeaddrinfo(infoPtr) }
+
+        var current = infoPtr
+        while let info = current {
+            let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
+            if fd < 0 {
+                current = info.pointee.ai_next
+                continue
+            }
+
+            let flags = fcntl(fd, F_GETFL, 0)
+            _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+
+            let connectResult = connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen)
+            if connectResult == 0 {
+                close(fd)
+                return true
+            }
+
+            if errno == EINPROGRESS {
+                var pollFd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                let timeoutMs = Int32(timeout * 1000)
+                let pollResult = poll(&pollFd, 1, timeoutMs)
+                if pollResult > 0 {
+                    var soError: Int32 = 0
+                    var len = socklen_t(MemoryLayout.size(ofValue: soError))
+                    if getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &len) == 0, soError == 0 {
+                        close(fd)
+                        return true
+                    }
+                }
+            }
+
+            close(fd)
+            current = info.pointee.ai_next
+        }
+
+        return false
     }
 }
 

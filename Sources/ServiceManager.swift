@@ -85,26 +85,6 @@ final class ServiceManager {
             return
         }
 
-        if shouldAutoDetectScheme(for: service),
-           let host = service.effectiveHost(),
-           let port = service.port {
-            healthChecker.detectSchemeOnce(host: host, port: port) { [weak self] scheme in
-                guard let self else { return }
-                if let scheme {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self else { return }
-                        self.schemeOverrides[service.id] = scheme
-                        self.markExternalRunning(service: service, appConfig: appConfig, onStateChange: onStateChange, openUrls: true)
-                    }
-                } else {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.startManagedProcess(service: service, appConfig: appConfig, onStateChange: onStateChange)
-                    }
-                }
-            }
-            return
-        }
-
         let checks = effectiveHealthChecks(for: service).compactMap { URL(string: $0) }
         if !checks.isEmpty {
             healthChecker.checkOnce(checks: checks) { [weak self] ok in
@@ -125,29 +105,6 @@ final class ServiceManager {
 
     func refreshExternalState(service: ServiceConfig, appConfig: AppConfig, openUrls: Bool = false, onStateChange: @escaping () -> Void) {
         guard processes[service.id] == nil else { return }
-        if shouldAutoDetectScheme(for: service),
-           let host = service.effectiveHost(),
-           let port = service.port {
-            healthChecker.detectSchemeOnce(host: host, port: port) { [weak self] scheme in
-                guard let self else { return }
-                if let scheme {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self else { return }
-                        self.schemeOverrides[service.id] = scheme
-                        self.markExternalRunning(service: service, appConfig: appConfig, onStateChange: onStateChange, openUrls: openUrls)
-                    }
-                } else {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self else { return }
-                        self.externalMonitoring.remove(service.id)
-                        self.states[service.id] = .stopped
-                        onStateChange()
-                    }
-                }
-            }
-            return
-        }
-
         let checks = effectiveHealthChecks(for: service).compactMap { URL(string: $0) }
         guard !checks.isEmpty else { return }
         healthChecker.checkOnce(checks: checks) { [weak self] ok in
@@ -201,19 +158,6 @@ final class ServiceManager {
         processes[service.id] = process
         states[service.id] = .starting
         onStateChange()
-
-        if shouldAutoDetectScheme(for: service),
-           let host = service.effectiveHost(),
-           let port = service.port {
-            startSchemeDetection(
-                service: service,
-                host: host,
-                port: port,
-                appConfig: appConfig,
-                onStateChange: onStateChange
-            )
-            return
-        }
 
         let checks = effectiveHealthChecks(for: service).compactMap { URL(string: $0) }
         if checks.isEmpty {
@@ -413,16 +357,23 @@ final class ServiceManager {
         return !hasExplicitUrls && !hasExplicitChecks && service.port != nil
     }
 
-    private func startSchemeDetection(
-        service: ServiceConfig,
-        host: String,
-        port: Int,
-        appConfig: AppConfig,
-        onStateChange: @escaping () -> Void
-    ) {
+    private func openUrlsIfNeeded(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void) {
+        if let scheme = resolvedScheme(for: service) {
+            openUrlsNow(service: service, schemeOverride: scheme)
+            return
+        }
+
+        guard shouldAutoDetectScheme(for: service),
+              let host = service.effectiveHost(),
+              let port = service.port else {
+            openUrlsNow(service: service, schemeOverride: nil)
+            return
+        }
+
         if schemeTokens[service.id] != nil {
             return
         }
+
         let token = healthChecker.detectScheme(
             host: host,
             port: port,
@@ -437,13 +388,23 @@ final class ServiceManager {
                 guard let self else { return }
                 if let scheme {
                     self.schemeOverrides[service.id] = scheme
-                    self.markRunning(service: service, appConfig: appConfig, onStateChange: onStateChange)
+                    onStateChange()
+                    self.openUrlsNow(service: service, schemeOverride: scheme)
                 } else {
-                    self.markUnhealthy(service: service, appConfig: appConfig, onStateChange: onStateChange)
+                    self.openUrlsNow(service: service, schemeOverride: nil)
                 }
             }
         }
         schemeTokens[service.id] = token
+    }
+
+    private func openUrlsNow(service: ServiceConfig, schemeOverride: String?) {
+        let urls = service.effectiveOpenUrls(schemeOverride: schemeOverride)
+        for urlString in urls {
+            if let url = URL(string: urlString) {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     private func runStopCommand(_ command: String, workingDir: String?, env: [String: String]) {
@@ -472,14 +433,7 @@ final class ServiceManager {
             self.startHealthMonitor(service: service, appConfig: appConfig, onStateChange: onStateChange, allowExternal: true)
 
             if openUrls, service.autoOpen {
-                let urls = self.effectiveOpenUrls(for: service)
-                DispatchQueue.main.async {
-                    for urlString in urls {
-                        if let url = URL(string: urlString) {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                }
+                self.openUrlsIfNeeded(service: service, appConfig: appConfig, onStateChange: onStateChange)
             }
         }
     }
@@ -496,14 +450,7 @@ final class ServiceManager {
         startHealthMonitor(service: service, appConfig: appConfig, onStateChange: onStateChange)
 
         if openUrls, service.autoOpen {
-            let urls = effectiveOpenUrls(for: service)
-            DispatchQueue.main.async {
-                for urlString in urls {
-                    if let url = URL(string: urlString) {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-            }
+            openUrlsIfNeeded(service: service, appConfig: appConfig, onStateChange: onStateChange)
         }
     }
 
