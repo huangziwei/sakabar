@@ -115,16 +115,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         submenu.addItem(NSMenuItem.separator())
 
-        let urls = service.effectiveOpenUrls()
-        if !urls.isEmpty {
+        let openGroups = openUrlGroups(for: service, state: state)
+        if !openGroups.local.isEmpty || !openGroups.lan.isEmpty {
             let openItem = NSMenuItem(title: "Open", action: nil, keyEquivalent: "")
             openItem.image = MenuUI.symbolImage(name: "link")
             let openMenu = NSMenu()
-            for url in urls {
+            let localUrls = openGroups.local
+            let lanUrls = openGroups.lan
+
+            if !localUrls.isEmpty && !lanUrls.isEmpty {
+                openMenu.addItem(MenuUI.sectionHeader("Local"))
+            }
+            for url in localUrls {
                 let urlItem = MenuUI.menuItem(title: url, action: #selector(openURL(_:)), target: self, symbolName: "arrow.up.right.square")
                 urlItem.target = self
                 urlItem.representedObject = url
                 openMenu.addItem(urlItem)
+            }
+
+            if !lanUrls.isEmpty {
+                if !localUrls.isEmpty {
+                    openMenu.addItem(NSMenuItem.separator())
+                    openMenu.addItem(MenuUI.sectionHeader("LAN"))
+                }
+                for url in lanUrls {
+                    let urlItem = MenuUI.menuItem(title: url, action: #selector(openURL(_:)), target: self, symbolName: "wifi")
+                    urlItem.target = self
+                    urlItem.representedObject = url
+                    openMenu.addItem(urlItem)
+                }
             }
             openItem.submenu = openMenu
             submenu.addItem(openItem)
@@ -340,5 +359,68 @@ private extension AppDelegate {
             return "\(config.services.count) services"
         }
         return parts.joined(separator: " / ")
+    }
+    func openUrlGroups(for service: ServiceConfig, state: ServiceState) -> (local: [String], lan: [String]) {
+        let localUrls = service.effectiveOpenUrls()
+        let ports = portCandidates(for: service, state: state, localUrls: localUrls)
+        let lanUrls = lanUrls(for: service, ports: ports)
+        return (local: deduped(localUrls), lan: deduped(lanUrls))
+    }
+
+    func portCandidates(for service: ServiceConfig, state: ServiceState, localUrls: [String]) -> [Int] {
+        if let port = service.port {
+            return [port]
+        }
+
+        let explicitUrls = service.openUrls ?? []
+        let parsedPorts = (explicitUrls + localUrls).compactMap { URL(string: $0)?.port }
+        if !parsedPorts.isEmpty {
+            return parsedPorts
+        }
+
+        if state == .running {
+            return serviceManager.info(for: service).ports
+        }
+        return []
+    }
+
+    func lanUrls(for service: ServiceConfig, ports: [Int]) -> [String] {
+        guard !ports.isEmpty else { return [] }
+        let ips = NetworkInfo.localIPv4Addresses()
+        guard !ips.isEmpty else { return [] }
+        let scheme = preferredScheme(for: service)
+
+        var urls: [String] = []
+        for ip in ips {
+            for port in ports {
+                urls.append("\(scheme)://\(ip):\(port)")
+            }
+        }
+        return urls
+    }
+
+    func preferredScheme(for service: ServiceConfig) -> String {
+        if let urlString = service.openUrls?.first,
+           let url = URL(string: urlString),
+           let scheme = url.scheme {
+            return scheme
+        }
+        if let urlString = service.healthChecks?.first,
+           let url = URL(string: urlString),
+           let scheme = url.scheme {
+            return scheme
+        }
+        return "http"
+    }
+
+    func deduped(_ urls: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for url in urls {
+            if seen.insert(url).inserted {
+                result.append(url)
+            }
+        }
+        return result
     }
 }
