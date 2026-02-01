@@ -163,6 +163,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editItem.representedObject = service.id
         submenu.addItem(editItem)
 
+        let removeItem = MenuUI.menuItem(title: "Remove...", action: #selector(removeService(_:)), target: self, symbolName: "trash")
+        removeItem.representedObject = service.id
+        submenu.addItem(removeItem)
+
         submenu.addItem(NSMenuItem.separator())
 
         let infoItem = MenuUI.menuItem(title: "Info...", action: #selector(showInfo(_:)), target: self, symbolName: "info.circle")
@@ -238,6 +242,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.save(config)
         rebuildMenu()
         refreshExternalStates()
+    }
+
+    @objc private func removeService(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let index = config.services.firstIndex(where: { $0.id == id }) else { return }
+        let service = config.services[index]
+
+        let alert = NSAlert()
+        alert.messageText = "Remove \(service.label)?"
+        alert.informativeText = "This will remove the service from your config. Running processes will be stopped if possible."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        if serviceManager.canStop(service: service) {
+            serviceManager.stop(service: service, appConfig: config) { }
+        }
+
+        config.services.remove(at: index)
+        store.save(config)
+        serviceManager.stopOrphans(validServiceIds: Set(config.services.map { $0.id })) { }
+        rebuildMenu()
     }
 
     @objc private func showInfo(_ sender: NSMenuItem) {
