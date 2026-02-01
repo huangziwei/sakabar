@@ -27,6 +27,7 @@ final class ServiceManager {
     private var healthTokens: [String: UUID] = [:]
     private var healthTimers: [String: DispatchSourceTimer] = [:]
     private var healthInFlight: Set<String> = []
+    private var externalMonitoring: Set<String> = []
     private let healthChecker = HealthChecker()
     private let logManager = LogManager()
     private let portDetector = PortDetector()
@@ -40,6 +41,14 @@ final class ServiceManager {
             return url
         }
         return logManager.logURL(for: id)
+    }
+
+    func canStop(service: ServiceConfig) -> Bool {
+        if processes[service.id] != nil {
+            return true
+        }
+        let stopCommand = service.stopCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !stopCommand.isEmpty && externalMonitoring.contains(service.id)
     }
 
     func info(for service: ServiceConfig) -> ServiceInfo {
@@ -71,6 +80,45 @@ final class ServiceManager {
             return
         }
 
+        let checks = service.effectiveHealthChecks().compactMap { URL(string: $0) }
+        if !checks.isEmpty {
+            healthChecker.checkOnce(checks: checks) { [weak self] ok in
+                guard let self else { return }
+                if ok {
+                    self.markExternalRunning(service: service, appConfig: appConfig, onStateChange: onStateChange, openUrls: true)
+                } else {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.startManagedProcess(service: service, appConfig: appConfig, onStateChange: onStateChange)
+                    }
+                }
+            }
+            return
+        }
+
+        startManagedProcess(service: service, appConfig: appConfig, onStateChange: onStateChange)
+    }
+
+    func refreshExternalState(service: ServiceConfig, appConfig: AppConfig, openUrls: Bool = false, onStateChange: @escaping () -> Void) {
+        guard processes[service.id] == nil else { return }
+        let checks = service.effectiveHealthChecks().compactMap { URL(string: $0) }
+        guard !checks.isEmpty else { return }
+        healthChecker.checkOnce(checks: checks) { [weak self] ok in
+            guard let self else { return }
+            if ok {
+                self.markExternalRunning(service: service, appConfig: appConfig, onStateChange: onStateChange, openUrls: openUrls)
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.externalMonitoring.remove(service.id)
+                    self.states[service.id] = .stopped
+                    onStateChange()
+                }
+            }
+        }
+    }
+
+    private func startManagedProcess(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void) {
+        externalMonitoring.remove(service.id)
         guard let process = buildProcess(service: service, appConfig: appConfig) else {
             return
         }
@@ -126,10 +174,18 @@ final class ServiceManager {
     }
 
     func stop(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void) {
+        let hasProcess = (processes[service.id] != nil)
+        let stopCommand = service.stopCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hasStopCommand = !stopCommand.isEmpty
+        if !hasProcess && !hasStopCommand {
+            return
+        }
+
         cancelHealthCheck(serviceId: service.id)
         cancelHealthMonitor(serviceId: service.id)
+        externalMonitoring.remove(service.id)
 
-        if let stopCommand = service.stopCommand, !stopCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if hasStopCommand {
             runStopCommand(stopCommand, workingDir: service.workingDir, env: makeEnvironment(service: service, appConfig: appConfig))
         }
 
@@ -148,6 +204,7 @@ final class ServiceManager {
     }
 
     func restart(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void) {
+        guard canStop(service: service) else { return }
         stop(service: service, appConfig: appConfig) { }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.start(service: service, appConfig: appConfig, onStateChange: onStateChange)
@@ -155,7 +212,9 @@ final class ServiceManager {
     }
 
     func stopOrphans(validServiceIds: Set<String>, onStateChange: @escaping () -> Void) {
-        for (id, process) in processes where !validServiceIds.contains(id) {
+        let orphanProcessIds = processes.keys.filter { !validServiceIds.contains($0) }
+        for id in orphanProcessIds {
+            guard let process = processes[id] else { continue }
             let pid = process.processIdentifier
             if pid > 0 {
                 _ = killpg(pid, SIGTERM)
@@ -163,7 +222,18 @@ final class ServiceManager {
             process.terminate()
             processes.removeValue(forKey: id)
             states[id] = .stopped
+            cancelHealthCheck(serviceId: id)
             cancelHealthMonitor(serviceId: id)
+            externalMonitoring.remove(id)
+            closeLog(serviceId: id)
+        }
+
+        let orphanStateIds = states.keys.filter { !validServiceIds.contains($0) }
+        for id in orphanStateIds {
+            cancelHealthCheck(serviceId: id)
+            cancelHealthMonitor(serviceId: id)
+            externalMonitoring.remove(id)
+            states.removeValue(forKey: id)
             closeLog(serviceId: id)
         }
         onStateChange()
@@ -253,12 +323,34 @@ final class ServiceManager {
         return URL(fileURLWithPath: NSHomeDirectory())
     }
 
+    private func markExternalRunning(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void, openUrls: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.externalMonitoring.insert(service.id)
+            self.states[service.id] = .running
+            onStateChange()
+            self.startHealthMonitor(service: service, appConfig: appConfig, onStateChange: onStateChange, allowExternal: true)
+
+            if openUrls, service.autoOpen {
+                let urls = service.effectiveOpenUrls()
+                DispatchQueue.main.async {
+                    for urlString in urls {
+                        if let url = URL(string: urlString) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private func markRunning(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void, openUrls: Bool = true) {
         guard let process = processes[service.id], process.isRunning else {
             states[service.id] = .stopped
             onStateChange()
             return
         }
+        externalMonitoring.remove(service.id)
         states[service.id] = .running
         onStateChange()
         startHealthMonitor(service: service, appConfig: appConfig, onStateChange: onStateChange)
@@ -288,6 +380,7 @@ final class ServiceManager {
         }
         cancelHealthCheck(serviceId: serviceId)
         cancelHealthMonitor(serviceId: serviceId)
+        externalMonitoring.remove(serviceId)
         states[serviceId] = .stopped
         closeLog(serviceId: serviceId)
         onStateChange()
@@ -311,7 +404,7 @@ final class ServiceManager {
         startHealthMonitor(service: service, appConfig: appConfig, onStateChange: onStateChange)
     }
 
-    private func startHealthMonitor(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void) {
+    private func startHealthMonitor(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void, allowExternal: Bool = false) {
         let checks = service.effectiveHealthChecks().compactMap { URL(string: $0) }
         guard !checks.isEmpty else { return }
         if healthTimers[service.id] != nil {
@@ -323,7 +416,12 @@ final class ServiceManager {
         timer.schedule(deadline: .now() + interval, repeating: interval)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            if self.processes[service.id] == nil {
+            let hasProcess = (self.processes[service.id] != nil)
+            if !allowExternal && !hasProcess {
+                self.cancelHealthMonitor(serviceId: service.id)
+                return
+            }
+            if allowExternal && !hasProcess && !self.externalMonitoring.contains(service.id) {
                 self.cancelHealthMonitor(serviceId: service.id)
                 return
             }

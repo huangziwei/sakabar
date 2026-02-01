@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "saka"
         rebuildMenu()
+        refreshExternalStates()
     }
 
     private func rebuildMenu() {
@@ -68,6 +69,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
+    private func refreshExternalStates(openUrls: Bool = false) {
+        for service in config.services {
+            serviceManager.refreshExternalState(service: service, appConfig: config, openUrls: openUrls) { [weak self] in
+                self?.rebuildMenu()
+            }
+        }
+    }
+
     private func makeServiceItem(_ service: ServiceConfig) -> NSMenuItem {
         let state = serviceManager.state(for: service.id)
         let title = "\(service.label) — \(state.displayName)"
@@ -81,16 +90,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startItem.isEnabled = (state == .stopped || state == .unhealthy)
         submenu.addItem(startItem)
 
+        let canStop = serviceManager.canStop(service: service)
         let stopItem = NSMenuItem(title: "Stop", action: #selector(stopService(_:)), keyEquivalent: "")
         stopItem.target = self
         stopItem.representedObject = service.id
-        stopItem.isEnabled = (state != .stopped)
+        stopItem.isEnabled = (state != .stopped && canStop)
         submenu.addItem(stopItem)
 
         let restartItem = NSMenuItem(title: "Restart", action: #selector(restartService(_:)), keyEquivalent: "")
         restartItem.target = self
         restartItem.representedObject = service.id
-        restartItem.isEnabled = (state != .stopped)
+        restartItem.isEnabled = (state != .stopped && canStop)
         submenu.addItem(restartItem)
 
         let infoItem = NSMenuItem(title: "Info…", action: #selector(showInfo(_:)), keyEquivalent: "")
@@ -135,10 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func reloadConfig(_ sender: NSMenuItem) {
         config = store.load()
-        serviceManager.stopOrphans(validServiceIds: Set(config.services.map { $0.id })) {
-            self.rebuildMenu()
-        }
+        serviceManager.stopOrphans(validServiceIds: Set(config.services.map { $0.id })) { }
         rebuildMenu()
+        refreshExternalStates()
     }
 
     @objc private func openConfig(_ sender: NSMenuItem) {
@@ -212,16 +221,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func stopAll(_ sender: NSMenuItem) {
         for service in config.services {
-            serviceManager.stop(service: service, appConfig: config) { [weak self] in
-                self?.rebuildMenu()
+            if serviceManager.canStop(service: service) {
+                serviceManager.stop(service: service, appConfig: config) { [weak self] in
+                    self?.rebuildMenu()
+                }
             }
         }
     }
 
     @objc private func restartAll(_ sender: NSMenuItem) {
         for service in config.services {
-            serviceManager.restart(service: service, appConfig: config) { [weak self] in
-                self?.rebuildMenu()
+            if serviceManager.canStop(service: service) {
+                serviceManager.restart(service: service, appConfig: config) { [weak self] in
+                    self?.rebuildMenu()
+                }
             }
         }
     }
