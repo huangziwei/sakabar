@@ -1,6 +1,8 @@
-# sakabar
+# Sakabar 酒場
 
-Standalone macOS menubar app to manage local services from a JSON config.
+![](Resources/AppIcon.png)
+
+An macOS menubar app to manage local services.
 
 Build:
 
@@ -11,5 +13,5 @@ Build:
 Run:
 
 ```sh
-open build/sakabar.app
+open build/Sakabar.app
 ```

@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>sakabar</string>
+  <string>Sakabar</string>
   <key>CFBundleDisplayName</key>
-  <string>sakabar</string>
+  <string>Sakabar</string>
   <key>CFBundleIdentifier</key>
   <string>com.sakabar.app</string>
   <key>CFBundleVersion</key>
@@ -15,7 +15,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleExecutable</key>
-  <string>sakabar</string>
+  <string>Sakabar</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>LSUIElement</key>
   <true/>
   <key>NSHighResolutionCapable</key>
