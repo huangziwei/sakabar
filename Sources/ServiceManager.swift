@@ -50,7 +50,10 @@ final class ServiceManager {
             return true
         }
         let stopCommand = service.stopCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return !stopCommand.isEmpty && externalMonitoring.contains(service.id)
+        if !stopCommand.isEmpty {
+            return true
+        }
+        return canStopByPort(service: service)
     }
 
     func info(for service: ServiceConfig) -> ServiceInfo {
@@ -235,7 +238,9 @@ final class ServiceManager {
         let hasProcess = (processes[service.id] != nil)
         let stopCommand = service.stopCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let hasStopCommand = !stopCommand.isEmpty
-        if !hasProcess && !hasStopCommand {
+        let ports = portsForService(service)
+        let canKillByPort = !hasStopCommand && !ports.isEmpty
+        if !hasProcess && !hasStopCommand && !canKillByPort {
             return
         }
 
@@ -255,6 +260,8 @@ final class ServiceManager {
             }
             process.terminate()
             processes.removeValue(forKey: service.id)
+        } else if canKillByPort {
+            killByPort(ports)
         }
 
         states[service.id] = .stopped
@@ -377,6 +384,17 @@ final class ServiceManager {
             ports.append(port)
         }
         return Array(Set(ports)).sorted()
+    }
+
+    private func canStopByPort(service: ServiceConfig) -> Bool {
+        !portsForService(service).isEmpty
+    }
+
+    private func killByPort(_ ports: [Int]) {
+        let pids = portDetector.detectPids(listeningOn: ports)
+        for pid in pids where pid > 0 {
+            _ = kill(pid, SIGTERM)
+        }
     }
 
     private func explicitScheme(for service: ServiceConfig) -> String? {
