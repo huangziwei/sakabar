@@ -40,7 +40,7 @@ enum UIFlows {
         return field
     }
 
-    private static func makeSection(title: String, rows: [(String, NSTextField)]) -> NSStackView {
+    private static func makeSection(title: String, rows: [(String, NSView)]) -> NSStackView {
         let label = makeSectionLabel(title)
         let grid = makeFormGrid(rows: rows)
         let stack = NSStackView(views: [label, grid])
@@ -73,14 +73,18 @@ enum UIFlows {
         return label
     }
 
-    private static func makeFormGrid(rows: [(String, NSTextField)]) -> NSGridView {
+    private static func makeFormGrid(rows: [(String, NSView)]) -> NSGridView {
         let rowViews: [[NSView]] = rows.map { labelText, field in
             let label = NSTextField(labelWithString: labelText)
             label.alignment = .right
             label.setContentHuggingPriority(.required, for: .horizontal)
 
             field.translatesAutoresizingMaskIntoConstraints = false
-            field.widthAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
+            if let textField = field as? NSTextField {
+                textField.widthAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
+            } else {
+                field.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+            }
 
             return [label, field]
         }
@@ -91,6 +95,41 @@ enum UIFlows {
         grid.column(at: 0).xPlacement = .trailing
         grid.column(at: 1).xPlacement = .fill
         return grid
+    }
+
+    private static func makeSchemeControl(initial: ServiceConfig?) -> NSSegmentedControl {
+        let control = NSSegmentedControl(labels: ["HTTP", "HTTPS"], trackingMode: .selectOne, target: nil, action: nil)
+        control.segmentStyle = .rounded
+        control.controlSize = .small
+        let scheme = initialScheme(for: initial)
+        control.selectedSegment = (scheme == "https") ? 1 : 0
+        return control
+    }
+
+    private static func schemeValue(from control: NSSegmentedControl) -> String? {
+        switch control.selectedSegment {
+        case 1:
+            return "https"
+        default:
+            return "http"
+        }
+    }
+
+    private static func initialScheme(for service: ServiceConfig?) -> String {
+        if let scheme = service?.scheme?.lowercased(), !scheme.isEmpty {
+            return scheme
+        }
+        if let urlString = service?.openUrls?.first,
+           let scheme = URL(string: urlString)?.scheme,
+           !scheme.isEmpty {
+            return scheme
+        }
+        if let urlString = service?.healthChecks?.first,
+           let scheme = URL(string: urlString)?.scheme,
+           !scheme.isEmpty {
+            return scheme
+        }
+        return "http"
     }
 
     private static func promptServiceForm(
@@ -110,6 +149,7 @@ enum UIFlows {
         let workingDirField = makeField(placeholder: "/Users/ziweih/projects/ptts", isMonospace: true)
         let hostField = makeField(placeholder: "localhost (optional)")
         let portField = makeField(placeholder: "1912 (optional)")
+        let schemeControl = makeSchemeControl(initial: initial)
         let stopField = makeField(placeholder: "(optional)", isMonospace: true)
 
         if let initial {
@@ -130,16 +170,17 @@ enum UIFlows {
         startAtLoginButton.state = (initial?.startAtLogin ?? false) ? .on : .off
         startAtLoginButton.controlSize = .small
 
-        let serviceRows: [(String, NSTextField)] = [
+        let serviceRows: [(String, NSView)] = [
             ("Name", nameField),
             ("Command (shell)", commandField),
             ("Working directory (optional)", workingDirField),
             ("Stop command (optional)", stopField)
         ]
 
-        let networkRows: [(String, NSTextField)] = [
+        let networkRows: [(String, NSView)] = [
             ("Host (optional)", hostField),
-            ("Port (optional)", portField)
+            ("Port (optional)", portField),
+            ("Scheme", schemeControl)
         ]
 
         let serviceSection = makeSection(title: "Service", rows: serviceRows)
@@ -229,6 +270,7 @@ enum UIFlows {
             env: initial?.env,
             host: hostValue.isEmpty ? nil : hostValue,
             port: port,
+            scheme: schemeValue(from: schemeControl),
             healthChecks: initial?.healthChecks,
             openUrls: initial?.openUrls,
             stopCommand: stopCommand.isEmpty ? nil : stopCommand,

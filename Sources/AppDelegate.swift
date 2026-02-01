@@ -463,7 +463,22 @@ private extension AppDelegate {
            let scheme = url.scheme {
             return scheme
         }
-        return serviceManager.resolvedScheme(for: service) ?? "http"
+        if let scheme = service.scheme?.lowercased(), !scheme.isEmpty {
+            return scheme
+        }
+        if let urlString = service.openUrls?.first,
+           let url = URL(string: urlString),
+           let scheme = url.scheme,
+           !scheme.isEmpty {
+            return scheme
+        }
+        if let urlString = service.healthChecks?.first,
+           let url = URL(string: urlString),
+           let scheme = url.scheme,
+           !scheme.isEmpty {
+            return scheme
+        }
+        return "http"
     }
 
     func deduped(_ urls: [String]) -> [String] {

@@ -78,6 +78,7 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
     var env: [String: String]?
     var host: String?
     var port: Int?
+    var scheme: String?
     var healthChecks: [String]?
     var openUrls: [String]?
     var stopCommand: String?
@@ -93,6 +94,7 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
         env: [String: String]? = nil,
         host: String? = nil,
         port: Int? = nil,
+        scheme: String? = nil,
         healthChecks: [String]? = nil,
         openUrls: [String]? = nil,
         stopCommand: String? = nil,
@@ -107,6 +109,7 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
         self.env = env
         self.host = host
         self.port = port
+        self.scheme = scheme
         self.healthChecks = healthChecks
         self.openUrls = openUrls
         self.stopCommand = stopCommand
@@ -218,6 +221,9 @@ extension ServiceConfig {
     }
 
     private func preferredScheme() -> String {
+        if let scheme, !scheme.isEmpty {
+            return scheme
+        }
         if let urlString = openUrls?.first,
            let url = URL(string: urlString),
            let scheme = url.scheme,
