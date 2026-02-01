@@ -4,15 +4,15 @@ enum UIFlows {
     static func promptAddService() -> ServiceConfig? {
         let alert = NSAlert()
         alert.messageText = "Add Service"
-        alert.informativeText = "Define the service command and optional URLs."
+        alert.informativeText = "Define the service command and optional host/port."
         alert.addButton(withTitle: "Add")
         alert.addButton(withTitle: "Cancel")
 
         let nameField = makeField(placeholder: "ptts")
         let commandField = makeField(placeholder: "./bin/pmx uv run ptts play")
         let workingDirField = makeField(placeholder: "/Users/ziweih/projects/ptts")
-        let healthField = makeField(placeholder: "http://localhost:1912")
-        let openField = makeField(placeholder: "http://localhost:1912")
+        let hostField = makeField(placeholder: "localhost (optional)")
+        let portField = makeField(placeholder: "1912 (optional)")
         let stopField = makeField(placeholder: "(optional)")
 
         let autoOpenButton = NSButton(checkboxWithTitle: "Auto-open URLs when ready", target: nil, action: nil)
@@ -23,8 +23,8 @@ enum UIFlows {
             ("Name", nameField),
             ("Command (shell)", commandField),
             ("Working directory (optional)", workingDirField),
-            ("Health checks (comma-separated URLs)", healthField),
-            ("Open URLs (comma-separated URLs)", openField),
+            ("Host (optional)", hostField),
+            ("Port (optional)", portField),
             ("Stop command (optional)", stopField)
         ]
 
@@ -81,16 +81,25 @@ enum UIFlows {
         }
 
         let workingDir = workingDirField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let healthChecks = parseList(healthField.stringValue)
-        let openUrls = parseList(openField.stringValue)
+        let hostInput = hostField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let portInput = portField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inferred = inferHostPort(command: command)
+        let hostValue = hostInput.isEmpty ? (inferred.host ?? "") : hostInput
+        let portValue = portInput.isEmpty ? inferred.port : portInput
+        let port = portValue.flatMap { Int($0) }
+        if !portValue.isNilOrEmpty && port == nil {
+            showError(message: "Port must be a number.")
+            return nil
+        }
+
         let stopCommand = stopField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
 
         return ServiceConfig(
             label: name,
             command: command,
             workingDir: workingDir.isEmpty ? nil : workingDir,
-            healthChecks: healthChecks,
-            openUrls: openUrls,
+            host: hostValue.isEmpty ? nil : hostValue,
+            port: port,
             stopCommand: stopCommand.isEmpty ? nil : stopCommand,
             autoOpen: autoOpenButton.state == .on,
             startAtLogin: startAtLoginButton.state == .on
@@ -106,11 +115,6 @@ enum UIFlows {
         alert.runModal()
     }
 
-    private static func parseList(_ text: String) -> [String]? {
-        let parts = text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        return parts.isEmpty ? nil : parts
-    }
-
     private static func makeField(placeholder: String) -> NSTextField {
         let field = NSTextField(string: "")
         field.placeholderString = placeholder
@@ -118,5 +122,45 @@ enum UIFlows {
         field.isBezeled = true
         field.isSelectable = true
         return field
+    }
+
+    private static func inferHostPort(command: String) -> (host: String?, port: String?) {
+        let tokens = command.split(separator: " ").map(String.init)
+        var host: String?
+        var port: String?
+
+        for (idx, token) in tokens.enumerated() {
+            if token == "--host", idx + 1 < tokens.count {
+                host = tokens[idx + 1]
+            } else if token.hasPrefix("--host=") {
+                host = String(token.dropFirst("--host=".count))
+            } else if token == "--port", idx + 1 < tokens.count {
+                port = tokens[idx + 1]
+            } else if token.hasPrefix("--port=") {
+                port = String(token.dropFirst("--port=".count))
+            } else if token == "-p", idx + 1 < tokens.count {
+                port = tokens[idx + 1]
+            } else if token.hasPrefix("HOST=") {
+                host = String(token.dropFirst("HOST=".count))
+            } else if token.hasPrefix("PORT=") {
+                port = String(token.dropFirst("PORT=".count))
+            } else if token.contains("://") {
+                if let url = URL(string: token) {
+                    host = url.host ?? host
+                    if let p = url.port {
+                        port = String(p)
+                    }
+                }
+            }
+        }
+
+        return (host, port)
+    }
+}
+
+private extension String? {
+    var isNilOrEmpty: Bool {
+        guard let value = self else { return true }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }

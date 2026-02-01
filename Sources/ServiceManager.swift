@@ -6,7 +6,7 @@ enum ServiceState {
     case stopped
     case starting
     case running
-    case externalRunning
+    case unhealthy
 }
 
 struct ServiceInfo {
@@ -25,6 +25,8 @@ final class ServiceManager {
     private var logHandles: [String: FileHandle] = [:]
     private var logURLs: [String: URL] = [:]
     private var healthTokens: [String: UUID] = [:]
+    private var healthTimers: [String: DispatchSourceTimer] = [:]
+    private var healthInFlight: Set<String> = []
     private let healthChecker = HealthChecker()
     private let logManager = LogManager()
     private let portDetector = PortDetector()
@@ -58,42 +60,14 @@ final class ServiceManager {
             command: command,
             workingDir: service.workingDir,
             ports: ports,
-            healthChecks: service.healthChecks ?? [],
-            openUrls: service.openUrls ?? []
+            healthChecks: service.effectiveHealthChecks(),
+            openUrls: service.effectiveOpenUrls()
         )
     }
 
-    func refreshExternalStates(services: [ServiceConfig], appConfig: AppConfig, onChange: @escaping () -> Void) {
-        for service in services {
-            if processes[service.id] != nil {
-                continue
-            }
-            let checks = (service.healthChecks ?? []).compactMap { URL(string: $0) }
-            guard !checks.isEmpty else {
-                if states[service.id] == .externalRunning {
-                    states[service.id] = .stopped
-                    onChange()
-                }
-                continue
-            }
-            healthChecker.checkOnce(checks: checks) { [weak self] ok in
-                guard let self else { return }
-                if self.processes[service.id] != nil {
-                    return
-                }
-                let nextState: ServiceState = ok ? .externalRunning : .stopped
-                if self.states[service.id] != nextState {
-                    self.states[service.id] = nextState
-                    DispatchQueue.main.async {
-                        onChange()
-                    }
-                }
-            }
-        }
-    }
-
     func start(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void) {
-        if let current = states[service.id], current != .stopped {
+        if processes[service.id] != nil {
+            restart(service: service, appConfig: appConfig, onStateChange: onStateChange)
             return
         }
 
@@ -132,19 +106,19 @@ final class ServiceManager {
         states[service.id] = .starting
         onStateChange()
 
-        let checks = (service.healthChecks ?? []).compactMap { URL(string: $0) }
+        let checks = service.effectiveHealthChecks().compactMap { URL(string: $0) }
         if checks.isEmpty {
-            markRunning(service: service, onStateChange: onStateChange)
+            markRunning(service: service, appConfig: appConfig, onStateChange: onStateChange)
         } else {
             let token = healthChecker.start(
                 checks: checks,
                 timeout: appConfig.healthTimeoutSeconds,
                 interval: appConfig.healthIntervalSeconds,
                 onReady: { [weak self] in
-                    self?.markRunning(service: service, onStateChange: onStateChange)
+                    self?.markRunning(service: service, appConfig: appConfig, onStateChange: onStateChange)
                 },
                 onTimeout: { [weak self] in
-                    self?.markRunning(service: service, onStateChange: onStateChange, openUrls: false)
+                    self?.markUnhealthy(service: service, appConfig: appConfig, onStateChange: onStateChange)
                 }
             )
             healthTokens[service.id] = token
@@ -153,6 +127,7 @@ final class ServiceManager {
 
     func stop(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void) {
         cancelHealthCheck(serviceId: service.id)
+        cancelHealthMonitor(serviceId: service.id)
 
         if let stopCommand = service.stopCommand, !stopCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             runStopCommand(stopCommand, workingDir: service.workingDir, env: makeEnvironment(service: service, appConfig: appConfig))
@@ -188,6 +163,7 @@ final class ServiceManager {
             process.terminate()
             processes.removeValue(forKey: id)
             states[id] = .stopped
+            cancelHealthMonitor(serviceId: id)
             closeLog(serviceId: id)
         }
         onStateChange()
@@ -247,7 +223,7 @@ final class ServiceManager {
 
     private func portsForService(_ service: ServiceConfig) -> [Int] {
         var ports: [Int] = []
-        let urls = (service.healthChecks ?? []) + (service.openUrls ?? [])
+        let urls = service.effectiveHealthChecks() + service.effectiveOpenUrls()
         for raw in urls {
             guard let url = URL(string: raw), let port = url.port else {
                 continue
@@ -268,7 +244,7 @@ final class ServiceManager {
         try? process.run()
     }
 
-    private func markRunning(service: ServiceConfig, onStateChange: @escaping () -> Void, openUrls: Bool = true) {
+    private func markRunning(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void, openUrls: Bool = true) {
         guard let process = processes[service.id], process.isRunning else {
             states[service.id] = .stopped
             onStateChange()
@@ -276,8 +252,10 @@ final class ServiceManager {
         }
         states[service.id] = .running
         onStateChange()
+        startHealthMonitor(service: service, appConfig: appConfig, onStateChange: onStateChange)
 
-        if openUrls, service.autoOpen, let urls = service.openUrls {
+        if openUrls, service.autoOpen {
+            let urls = service.effectiveOpenUrls()
             DispatchQueue.main.async {
                 for urlString in urls {
                     if let url = URL(string: urlString) {
@@ -300,6 +278,7 @@ final class ServiceManager {
             processes.removeValue(forKey: serviceId)
         }
         cancelHealthCheck(serviceId: serviceId)
+        cancelHealthMonitor(serviceId: serviceId)
         states[serviceId] = .stopped
         closeLog(serviceId: serviceId)
         onStateChange()
@@ -310,5 +289,61 @@ final class ServiceManager {
             try? handle.close()
             logHandles.removeValue(forKey: serviceId)
         }
+    }
+
+    private func markUnhealthy(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void) {
+        guard let process = processes[service.id], process.isRunning else {
+            states[service.id] = .stopped
+            onStateChange()
+            return
+        }
+        states[service.id] = .unhealthy
+        onStateChange()
+        startHealthMonitor(service: service, appConfig: appConfig, onStateChange: onStateChange)
+    }
+
+    private func startHealthMonitor(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void) {
+        let checks = service.effectiveHealthChecks().compactMap { URL(string: $0) }
+        guard !checks.isEmpty else { return }
+        if healthTimers[service.id] != nil {
+            return
+        }
+
+        let interval = max(1, appConfig.healthIntervalSeconds)
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + interval, repeating: interval)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            if self.processes[service.id] == nil {
+                self.cancelHealthMonitor(serviceId: service.id)
+                return
+            }
+            if self.healthInFlight.contains(service.id) {
+                return
+            }
+            self.healthInFlight.insert(service.id)
+            self.healthChecker.checkOnce(checks: checks) { ok in
+                self.healthInFlight.remove(service.id)
+                guard self.processes[service.id] != nil else { return }
+                let current = self.states[service.id] ?? .stopped
+                let next: ServiceState = ok ? .running : .unhealthy
+                if current != next {
+                    self.states[service.id] = next
+                    DispatchQueue.main.async {
+                        onStateChange()
+                    }
+                }
+            }
+        }
+        healthTimers[service.id] = timer
+        timer.resume()
+    }
+
+    private func cancelHealthMonitor(serviceId: String) {
+        if let timer = healthTimers[serviceId] {
+            timer.cancel()
+            healthTimers.removeValue(forKey: serviceId)
+        }
+        healthInFlight.remove(serviceId)
     }
 }

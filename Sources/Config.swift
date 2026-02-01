@@ -30,6 +30,8 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
     var args: [String]?
     var workingDir: String?
     var env: [String: String]?
+    var host: String?
+    var port: Int?
     var healthChecks: [String]?
     var openUrls: [String]?
     var stopCommand: String?
@@ -43,6 +45,8 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
         args: [String]? = nil,
         workingDir: String? = nil,
         env: [String: String]? = nil,
+        host: String? = nil,
+        port: Int? = nil,
         healthChecks: [String]? = nil,
         openUrls: [String]? = nil,
         stopCommand: String? = nil,
@@ -55,6 +59,8 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
         self.args = args
         self.workingDir = workingDir
         self.env = env
+        self.host = host
+        self.port = port
         self.healthChecks = healthChecks
         self.openUrls = openUrls
         self.stopCommand = stopCommand
@@ -127,6 +133,39 @@ final class ConfigStore {
             return "Command or args are required."
         }
 
+        if let port = service.port, !(1...65535).contains(port) {
+            return "Port must be between 1 and 65535."
+        }
+
         return nil
+    }
+}
+
+extension ServiceConfig {
+    func effectiveHost() -> String? {
+        let trimmed = host?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            return trimmed
+        }
+        if port != nil {
+            return "localhost"
+        }
+        return nil
+    }
+
+    func effectiveHealthChecks() -> [String] {
+        if let checks = healthChecks, !checks.isEmpty {
+            return checks
+        }
+        guard let host = effectiveHost(), let port = port else { return [] }
+        return ["http://\(host):\(port)"]
+    }
+
+    func effectiveOpenUrls() -> [String] {
+        if let urls = openUrls, !urls.isEmpty {
+            return urls
+        }
+        guard let host = effectiveHost(), let port = port else { return [] }
+        return ["http://\(host):\(port)"]
     }
 }

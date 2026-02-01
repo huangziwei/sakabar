@@ -66,9 +66,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
-        serviceManager.refreshExternalStates(services: config.services, appConfig: config) { [weak self] in
-            self?.rebuildMenu()
-        }
     }
 
     private func makeServiceItem(_ service: ServiceConfig) -> NSMenuItem {
@@ -81,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let startItem = NSMenuItem(title: "Start", action: #selector(startService(_:)), keyEquivalent: "")
         startItem.target = self
         startItem.representedObject = service.id
-        startItem.isEnabled = (state == .stopped)
+        startItem.isEnabled = (state == .stopped || state == .unhealthy)
         submenu.addItem(startItem)
 
         let stopItem = NSMenuItem(title: "Stop", action: #selector(stopService(_:)), keyEquivalent: "")
@@ -101,7 +98,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         infoItem.representedObject = service.id
         submenu.addItem(infoItem)
 
-        if let urls = service.openUrls, !urls.isEmpty {
+        let urls = service.effectiveOpenUrls()
+        if !urls.isEmpty {
             let openItem = NSMenuItem(title: "Open", action: nil, keyEquivalent: "")
             let openMenu = NSMenu()
             for url in urls {
@@ -254,8 +252,8 @@ private extension ServiceState {
             return "Starting"
         case .running:
             return "Running"
-        case .externalRunning:
-            return "Running (external)"
+        case .unhealthy:
+            return "Stopped"
         }
     }
 }
