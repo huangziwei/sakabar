@@ -9,58 +9,60 @@ enum UIFlows {
         alert.addButton(withTitle: "Cancel")
 
         let nameField = makeField(placeholder: "ptts")
-        let commandField = makeField(placeholder: "./bin/pmx uv run ptts play")
-        let workingDirField = makeField(placeholder: "/Users/ziweih/projects/ptts")
+        let commandField = makeField(placeholder: "./bin/pmx uv run ptts play", isMonospace: true)
+        let workingDirField = makeField(placeholder: "/Users/ziweih/projects/ptts", isMonospace: true)
         let hostField = makeField(placeholder: "localhost (optional)")
         let portField = makeField(placeholder: "1912 (optional)")
-        let stopField = makeField(placeholder: "(optional)")
+        let stopField = makeField(placeholder: "(optional)", isMonospace: true)
 
         let autoOpenButton = NSButton(checkboxWithTitle: "Auto-open URLs when ready", target: nil, action: nil)
         autoOpenButton.state = .on
+        autoOpenButton.controlSize = .small
         let startAtLoginButton = NSButton(checkboxWithTitle: "Start at login (this service)", target: nil, action: nil)
+        startAtLoginButton.controlSize = .small
 
-        let rows: [(String, NSTextField)] = [
+        let serviceRows: [(String, NSTextField)] = [
             ("Name", nameField),
             ("Command (shell)", commandField),
             ("Working directory (optional)", workingDirField),
-            ("Host (optional)", hostField),
-            ("Port (optional)", portField),
             ("Stop command (optional)", stopField)
         ]
 
-        let labelWidth: CGFloat = 190
-        let fieldWidth: CGFloat = 360
-        let rowHeight: CGFloat = 24
-        let rowSpacing: CGFloat = 8
-        let gap: CGFloat = 10
-        let checkboxHeight: CGFloat = 20
-        let checkboxSpacing: CGFloat = 4
-        let optionsTopSpacing: CGFloat = 8
+        let networkRows: [(String, NSTextField)] = [
+            ("Host (optional)", hostField),
+            ("Port (optional)", portField)
+        ]
 
-        let rowsHeight = CGFloat(rows.count) * rowHeight + CGFloat(rows.count - 1) * rowSpacing
-        let optionsHeight = checkboxHeight * 2 + checkboxSpacing
-        let totalHeight = rowsHeight + optionsTopSpacing + optionsHeight
-        let totalWidth = labelWidth + gap + fieldWidth
+        let serviceSection = makeSection(title: "Service", rows: serviceRows)
+        let networkSection = makeSection(title: "Network", rows: networkRows)
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: totalWidth, height: totalHeight))
+        let optionsStack = NSStackView(views: [autoOpenButton, startAtLoginButton])
+        optionsStack.orientation = .vertical
+        optionsStack.spacing = 6
+        optionsStack.alignment = .leading
 
-        let rowsBottom = optionsHeight + optionsTopSpacing
-        var y = rowsBottom + (rowsHeight - rowHeight)
+        let behaviorSection = makeSection(title: "Behavior", content: optionsStack)
+        let hintLabel = makeHelpLabel("Tip: leave host/port blank to infer from the command or default to localhost.")
 
-        for (labelText, field) in rows {
-            let label = NSTextField(labelWithString: labelText)
-            label.alignment = .right
-            label.frame = NSRect(x: 0, y: y + 3, width: labelWidth, height: rowHeight)
-            field.frame = NSRect(x: labelWidth + gap, y: y, width: fieldWidth, height: rowHeight)
-            container.addSubview(label)
-            container.addSubview(field)
-            y -= (rowHeight + rowSpacing)
-        }
+        let containerStack = NSStackView(views: [serviceSection, networkSection, behaviorSection, hintLabel])
+        containerStack.orientation = .vertical
+        containerStack.spacing = 12
+        containerStack.alignment = .leading
+        containerStack.translatesAutoresizingMaskIntoConstraints = false
 
-        startAtLoginButton.frame = NSRect(x: labelWidth + gap, y: 0, width: fieldWidth, height: checkboxHeight)
-        autoOpenButton.frame = NSRect(x: labelWidth + gap, y: checkboxHeight + checkboxSpacing, width: fieldWidth, height: checkboxHeight)
-        container.addSubview(autoOpenButton)
-        container.addSubview(startAtLoginButton)
+        let targetWidth: CGFloat = 560
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: targetWidth, height: 10))
+        container.addSubview(containerStack)
+
+        NSLayoutConstraint.activate([
+            containerStack.topAnchor.constraint(equalTo: container.topAnchor),
+            containerStack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            containerStack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            containerStack.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+
+        container.layoutSubtreeIfNeeded()
+        container.setFrameSize(NSSize(width: targetWidth, height: containerStack.fittingSize.height))
 
         alert.accessoryView = container
         NSApp.activate(ignoringOtherApps: true)
@@ -115,13 +117,69 @@ enum UIFlows {
         alert.runModal()
     }
 
-    private static func makeField(placeholder: String) -> NSTextField {
+    private static func makeField(placeholder: String, isMonospace: Bool = false) -> NSTextField {
         let field = NSTextField(string: "")
         field.placeholderString = placeholder
         field.isEditable = true
         field.isBezeled = true
         field.isSelectable = true
+        if isMonospace {
+            field.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        }
         return field
+    }
+
+    private static func makeSection(title: String, rows: [(String, NSTextField)]) -> NSStackView {
+        let label = makeSectionLabel(title)
+        let grid = makeFormGrid(rows: rows)
+        let stack = NSStackView(views: [label, grid])
+        stack.orientation = .vertical
+        stack.spacing = 6
+        stack.alignment = .leading
+        return stack
+    }
+
+    private static func makeSection(title: String, content: NSView) -> NSStackView {
+        let label = makeSectionLabel(title)
+        let stack = NSStackView(views: [label, content])
+        stack.orientation = .vertical
+        stack.spacing = 6
+        stack.alignment = .leading
+        return stack
+    }
+
+    private static func makeSectionLabel(_ title: String) -> NSTextField {
+        let label = NSTextField(labelWithString: title.uppercased())
+        label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = NSColor.secondaryLabelColor
+        return label
+    }
+
+    private static func makeHelpLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        label.textColor = NSColor.secondaryLabelColor
+        return label
+    }
+
+    private static func makeFormGrid(rows: [(String, NSTextField)]) -> NSGridView {
+        let rowViews: [[NSView]] = rows.map { labelText, field in
+            let label = NSTextField(labelWithString: labelText)
+            label.alignment = .right
+            label.setContentHuggingPriority(.required, for: .horizontal)
+
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.widthAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
+
+            return [label, field]
+        }
+
+        let grid = NSGridView(views: rowViews)
+        grid.rowSpacing = 8
+        grid.columnSpacing = 12
+        grid.column(at: 0).xPlacement = .trailing
+        grid.column(at: 1).xPlacement = .fill
+        return grid
     }
 
     private static func inferHostPort(command: String) -> (host: String?, port: String?) {

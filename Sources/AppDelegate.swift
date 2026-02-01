@@ -13,19 +13,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppMenu.setupMainMenu()
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "saka"
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = statusItem.button {
+            button.image = MenuUI.statusBarIcon()
+            button.imagePosition = .imageOnly
+            button.title = ""
+        }
         rebuildMenu()
         refreshExternalStates()
     }
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        menu.autoenablesItems = false
 
+        menu.addItem(MenuUI.headerItem(appName: "Sakabar", summary: menuSummaryText()))
+        menu.addItem(NSMenuItem.separator())
+
+        menu.addItem(MenuUI.sectionHeader("Services"))
         if config.services.isEmpty {
-            let emptyItem = NSMenuItem(title: "No services configured", action: nil, keyEquivalent: "")
-            emptyItem.isEnabled = false
-            menu.addItem(emptyItem)
+            menu.addItem(MenuUI.placeholderItem("No services configured"))
         } else {
             for service in config.services {
                 menu.addItem(makeServiceItem(service))
@@ -33,37 +40,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(MenuUI.sectionHeader("Actions"))
 
-        let startAllItem = NSMenuItem(title: "Start All", action: #selector(startAll(_:)), keyEquivalent: "")
-        startAllItem.target = self
+        let hasServices = !config.services.isEmpty
+        let startAllItem = MenuUI.menuItem(title: "Start All", action: #selector(startAll(_:)), target: self, symbolName: "play.fill")
+        startAllItem.isEnabled = hasServices
         menu.addItem(startAllItem)
 
-        let stopAllItem = NSMenuItem(title: "Stop All", action: #selector(stopAll(_:)), keyEquivalent: "")
-        stopAllItem.target = self
+        let stopAllItem = MenuUI.menuItem(title: "Stop All", action: #selector(stopAll(_:)), target: self, symbolName: "stop.fill")
+        stopAllItem.isEnabled = hasServices
         menu.addItem(stopAllItem)
 
-        let restartAllItem = NSMenuItem(title: "Restart All", action: #selector(restartAll(_:)), keyEquivalent: "")
-        restartAllItem.target = self
+        let restartAllItem = MenuUI.menuItem(title: "Restart All", action: #selector(restartAll(_:)), target: self, symbolName: "arrow.clockwise")
+        restartAllItem.isEnabled = hasServices
         menu.addItem(restartAllItem)
 
-        menu.addItem(NSMenuItem.separator())
+        let refreshItem = MenuUI.menuItem(title: "Refresh Status", action: #selector(refreshStatus(_:)), target: self, symbolName: "arrow.clockwise.circle")
+        refreshItem.isEnabled = hasServices
+        menu.addItem(refreshItem)
 
-        let addItem = NSMenuItem(title: "+ Add Service", action: #selector(addService(_:)), keyEquivalent: "")
-        addItem.target = self
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(MenuUI.sectionHeader("Config"))
+
+        let addItem = MenuUI.menuItem(title: "Add Service", action: #selector(addService(_:)), target: self, symbolName: "plus")
         menu.addItem(addItem)
 
-        let reloadItem = NSMenuItem(title: "Reload Config", action: #selector(reloadConfig(_:)), keyEquivalent: "")
-        reloadItem.target = self
+        let reloadItem = MenuUI.menuItem(title: "Reload Config", action: #selector(reloadConfig(_:)), target: self, symbolName: "arrow.triangle.2.circlepath")
         menu.addItem(reloadItem)
 
-        let editItem = NSMenuItem(title: "Edit Config", action: #selector(openConfig(_:)), keyEquivalent: "")
-        editItem.target = self
+        let editItem = MenuUI.menuItem(title: "Edit Config", action: #selector(openConfig(_:)), target: self, symbolName: "pencil")
         menu.addItem(editItem)
 
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(MenuUI.sectionHeader("App"))
 
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp(_:)), keyEquivalent: "q")
-        quitItem.target = self
+        let quitItem = MenuUI.menuItem(title: "Quit", action: #selector(quitApp(_:)), target: self, symbolName: "power")
+        quitItem.keyEquivalent = "q"
         menu.addItem(quitItem)
 
         statusItem.menu = menu
@@ -79,41 +91,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeServiceItem(_ service: ServiceConfig) -> NSMenuItem {
         let state = serviceManager.state(for: service.id)
-        let title = "\(service.label) — \(state.displayName)"
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        item.attributedTitle = MenuUI.serviceTitle(label: service.label, status: state.displayName)
+        item.image = MenuUI.statusImage(for: state)
 
         let submenu = NSMenu()
 
-        let startItem = NSMenuItem(title: "Start", action: #selector(startService(_:)), keyEquivalent: "")
-        startItem.target = self
+        let startItem = MenuUI.menuItem(title: "Start", action: #selector(startService(_:)), target: self, symbolName: "play.fill")
         startItem.representedObject = service.id
         startItem.isEnabled = (state == .stopped || state == .unhealthy)
         submenu.addItem(startItem)
 
         let canStop = serviceManager.canStop(service: service)
-        let stopItem = NSMenuItem(title: "Stop", action: #selector(stopService(_:)), keyEquivalent: "")
-        stopItem.target = self
+        let stopItem = MenuUI.menuItem(title: "Stop", action: #selector(stopService(_:)), target: self, symbolName: "stop.fill")
         stopItem.representedObject = service.id
         stopItem.isEnabled = (state != .stopped && canStop)
         submenu.addItem(stopItem)
 
-        let restartItem = NSMenuItem(title: "Restart", action: #selector(restartService(_:)), keyEquivalent: "")
-        restartItem.target = self
+        let restartItem = MenuUI.menuItem(title: "Restart", action: #selector(restartService(_:)), target: self, symbolName: "arrow.clockwise")
         restartItem.representedObject = service.id
         restartItem.isEnabled = (state != .stopped && canStop)
         submenu.addItem(restartItem)
 
-        let infoItem = NSMenuItem(title: "Info…", action: #selector(showInfo(_:)), keyEquivalent: "")
-        infoItem.target = self
-        infoItem.representedObject = service.id
-        submenu.addItem(infoItem)
+        submenu.addItem(NSMenuItem.separator())
 
         let urls = service.effectiveOpenUrls()
         if !urls.isEmpty {
             let openItem = NSMenuItem(title: "Open", action: nil, keyEquivalent: "")
+            openItem.image = MenuUI.symbolImage(name: "link")
             let openMenu = NSMenu()
             for url in urls {
-                let urlItem = NSMenuItem(title: url, action: #selector(openURL(_:)), keyEquivalent: "")
+                let urlItem = MenuUI.menuItem(title: url, action: #selector(openURL(_:)), target: self, symbolName: "arrow.up.right.square")
                 urlItem.target = self
                 urlItem.representedObject = url
                 openMenu.addItem(urlItem)
@@ -122,10 +130,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             submenu.addItem(openItem)
         }
 
-        let logItem = NSMenuItem(title: "View Log", action: #selector(viewLog(_:)), keyEquivalent: "")
-        logItem.target = self
+        let logItem = MenuUI.menuItem(title: "View Log", action: #selector(viewLog(_:)), target: self, symbolName: "doc.text")
         logItem.representedObject = service.id
         submenu.addItem(logItem)
+
+        submenu.addItem(NSMenuItem.separator())
+
+        let infoItem = MenuUI.menuItem(title: "Info...", action: #selector(showInfo(_:)), target: self, symbolName: "info.circle")
+        infoItem.representedObject = service.id
+        submenu.addItem(infoItem)
 
         item.submenu = submenu
         return item
@@ -147,6 +160,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         config = store.load()
         serviceManager.stopOrphans(validServiceIds: Set(config.services.map { $0.id })) { }
         rebuildMenu()
+        refreshExternalStates()
+    }
+
+    @objc private func refreshStatus(_ sender: NSMenuItem) {
         refreshExternalStates()
     }
 
@@ -266,7 +283,42 @@ private extension ServiceState {
         case .running:
             return "Running"
         case .unhealthy:
-            return "Stopped"
+            return "Unhealthy"
         }
+    }
+}
+
+private extension AppDelegate {
+    func menuSummaryText() -> String {
+        guard !config.services.isEmpty else { return "No services configured" }
+
+        var running = 0
+        var starting = 0
+        var unhealthy = 0
+        var stopped = 0
+
+        for service in config.services {
+            switch serviceManager.state(for: service.id) {
+            case .running:
+                running += 1
+            case .starting:
+                starting += 1
+            case .unhealthy:
+                unhealthy += 1
+            case .stopped:
+                stopped += 1
+            }
+        }
+
+        var parts: [String] = []
+        if running > 0 { parts.append("\(running) running") }
+        if starting > 0 { parts.append("\(starting) starting") }
+        if unhealthy > 0 { parts.append("\(unhealthy) unhealthy") }
+        if stopped > 0 { parts.append("\(stopped) stopped") }
+
+        if parts.isEmpty {
+            return "\(config.services.count) services"
+        }
+        return parts.joined(separator: " / ")
     }
 }
