@@ -82,31 +82,30 @@ enum MenuUI {
         let image = NSImage(size: size)
         image.lockFocus()
 
-        let circleRect = NSRect(origin: .zero, size: size).insetBy(dx: 1.5, dy: 1.5)
-        let circle = NSBezierPath(ovalIn: circleRect)
-        circle.lineWidth = 1.4
         NSColor.black.setStroke()
-        circle.stroke()
-
-        let barHeight: CGFloat = 2.2
-        let barWidth: CGFloat = 9.0
-        let barX = (size.width - barWidth) / 2
-        let topY = (size.height / 2) + 2.4
-        let bottomY = (size.height / 2) - 4.4
-
-        let topBar = NSBezierPath(
-            roundedRect: NSRect(x: barX, y: topY, width: barWidth, height: barHeight),
-            xRadius: 1.1,
-            yRadius: 1.1
-        )
-        let bottomBar = NSBezierPath(
-            roundedRect: NSRect(x: barX, y: bottomY, width: barWidth, height: barHeight),
-            xRadius: 1.1,
-            yRadius: 1.1
-        )
         NSColor.black.setFill()
-        topBar.fill()
-        bottomBar.fill()
+
+        let bodyRect = NSRect(x: 4, y: 3, width: 8, height: 10.5)
+        let body = NSBezierPath(roundedRect: bodyRect, xRadius: 1.4, yRadius: 1.4)
+        body.lineWidth = 1.2
+        body.stroke()
+
+        let handleRect = NSRect(x: 12, y: 6, width: 4, height: 6.5)
+        let handle = NSBezierPath(roundedRect: handleRect, xRadius: 2.2, yRadius: 2.2)
+        handle.lineWidth = 1.2
+        handle.stroke()
+
+        let foamPath = NSBezierPath()
+        foamPath.append(NSBezierPath(ovalIn: NSRect(x: 3.5, y: 11.6, width: 4.0, height: 4.0)))
+        foamPath.append(NSBezierPath(ovalIn: NSRect(x: 6.0, y: 12.2, width: 4.2, height: 4.2)))
+        foamPath.append(NSBezierPath(ovalIn: NSRect(x: 8.6, y: 11.4, width: 4.2, height: 4.2)))
+        foamPath.fill()
+
+        let foamLine = NSBezierPath()
+        foamLine.move(to: NSPoint(x: 5.0, y: 11.0))
+        foamLine.line(to: NSPoint(x: 10.6, y: 11.0))
+        foamLine.lineWidth = 1.1
+        foamLine.stroke()
 
         image.unlockFocus()
         image.isTemplate = true
