@@ -419,9 +419,9 @@ private extension AppDelegate {
         rebuildMenu()
     }
     func openUrlGroups(for service: ServiceConfig, state: ServiceState) -> (local: [String], lan: [String]) {
-        let localUrls = service.effectiveOpenUrls()
+        let localUrls = serviceManager.effectiveOpenUrls(for: service)
         let ports = portCandidates(for: service, state: state, localUrls: localUrls)
-        let lanUrls = lanUrls(for: service, ports: ports)
+        let lanUrls = lanUrls(for: service, ports: ports, localUrls: localUrls)
         return (local: deduped(localUrls), lan: deduped(lanUrls))
     }
 
@@ -442,11 +442,11 @@ private extension AppDelegate {
         return []
     }
 
-    func lanUrls(for service: ServiceConfig, ports: [Int]) -> [String] {
+    func lanUrls(for service: ServiceConfig, ports: [Int], localUrls: [String]) -> [String] {
         guard !ports.isEmpty else { return [] }
         let ips = NetworkInfo.localIPv4Addresses()
         guard !ips.isEmpty else { return [] }
-        let scheme = preferredScheme(for: service)
+        let scheme = preferredScheme(for: service, localUrls: localUrls)
 
         var urls: [String] = []
         for ip in ips {
@@ -457,18 +457,13 @@ private extension AppDelegate {
         return urls
     }
 
-    func preferredScheme(for service: ServiceConfig) -> String {
-        if let urlString = service.openUrls?.first,
+    func preferredScheme(for service: ServiceConfig, localUrls: [String]) -> String {
+        if let urlString = localUrls.first,
            let url = URL(string: urlString),
            let scheme = url.scheme {
             return scheme
         }
-        if let urlString = service.healthChecks?.first,
-           let url = URL(string: urlString),
-           let scheme = url.scheme {
-            return scheme
-        }
-        return "http"
+        return serviceManager.resolvedScheme(for: service) ?? "http"
     }
 
     func deduped(_ urls: [String]) -> [String] {

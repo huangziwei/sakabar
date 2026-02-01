@@ -199,19 +199,37 @@ extension ServiceConfig {
         return nil
     }
 
-    func effectiveHealthChecks() -> [String] {
+    func effectiveHealthChecks(schemeOverride: String? = nil) -> [String] {
         if let checks = healthChecks, !checks.isEmpty {
             return checks
         }
         guard let host = effectiveHost(), let port = port else { return [] }
-        return ["http://\(host):\(port)"]
+        let scheme = schemeOverride ?? preferredScheme()
+        return ["\(scheme)://\(host):\(port)"]
     }
 
-    func effectiveOpenUrls() -> [String] {
+    func effectiveOpenUrls(schemeOverride: String? = nil) -> [String] {
         if let urls = openUrls, !urls.isEmpty {
             return urls
         }
         guard let host = effectiveHost(), let port = port else { return [] }
-        return ["http://\(host):\(port)"]
+        let scheme = schemeOverride ?? preferredScheme()
+        return ["\(scheme)://\(host):\(port)"]
+    }
+
+    private func preferredScheme() -> String {
+        if let urlString = openUrls?.first,
+           let url = URL(string: urlString),
+           let scheme = url.scheme,
+           !scheme.isEmpty {
+            return scheme
+        }
+        if let urlString = healthChecks?.first,
+           let url = URL(string: urlString),
+           let scheme = url.scheme,
+           !scheme.isEmpty {
+            return scheme
+        }
+        return "http"
     }
 }

@@ -25,9 +25,11 @@ final class ServiceManager {
     private var logHandles: [String: FileHandle] = [:]
     private var logURLs: [String: URL] = [:]
     private var healthTokens: [String: UUID] = [:]
+    private var schemeTokens: [String: UUID] = [:]
     private var healthTimers: [String: DispatchSourceTimer] = [:]
     private var healthInFlight: Set<String> = []
     private var externalMonitoring: Set<String> = []
+    private var schemeOverrides: [String: String] = [:]
     private let healthChecker = HealthChecker()
     private let logManager = LogManager()
     private let portDetector = PortDetector()
@@ -69,8 +71,8 @@ final class ServiceManager {
             command: command,
             workingDir: service.workingDir,
             ports: ports,
-            healthChecks: service.effectiveHealthChecks(),
-            openUrls: service.effectiveOpenUrls()
+            healthChecks: effectiveHealthChecks(for: service),
+            openUrls: effectiveOpenUrls(for: service)
         )
     }
 
@@ -80,7 +82,27 @@ final class ServiceManager {
             return
         }
 
-        let checks = service.effectiveHealthChecks().compactMap { URL(string: $0) }
+        if shouldAutoDetectScheme(for: service),
+           let host = service.effectiveHost(),
+           let port = service.port {
+            healthChecker.detectSchemeOnce(host: host, port: port) { [weak self] scheme in
+                guard let self else { return }
+                if let scheme {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.schemeOverrides[service.id] = scheme
+                        self.markExternalRunning(service: service, appConfig: appConfig, onStateChange: onStateChange, openUrls: true)
+                    }
+                } else {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.startManagedProcess(service: service, appConfig: appConfig, onStateChange: onStateChange)
+                    }
+                }
+            }
+            return
+        }
+
+        let checks = effectiveHealthChecks(for: service).compactMap { URL(string: $0) }
         if !checks.isEmpty {
             healthChecker.checkOnce(checks: checks) { [weak self] ok in
                 guard let self else { return }
@@ -100,7 +122,30 @@ final class ServiceManager {
 
     func refreshExternalState(service: ServiceConfig, appConfig: AppConfig, openUrls: Bool = false, onStateChange: @escaping () -> Void) {
         guard processes[service.id] == nil else { return }
-        let checks = service.effectiveHealthChecks().compactMap { URL(string: $0) }
+        if shouldAutoDetectScheme(for: service),
+           let host = service.effectiveHost(),
+           let port = service.port {
+            healthChecker.detectSchemeOnce(host: host, port: port) { [weak self] scheme in
+                guard let self else { return }
+                if let scheme {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.schemeOverrides[service.id] = scheme
+                        self.markExternalRunning(service: service, appConfig: appConfig, onStateChange: onStateChange, openUrls: openUrls)
+                    }
+                } else {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.externalMonitoring.remove(service.id)
+                        self.states[service.id] = .stopped
+                        onStateChange()
+                    }
+                }
+            }
+            return
+        }
+
+        let checks = effectiveHealthChecks(for: service).compactMap { URL(string: $0) }
         guard !checks.isEmpty else { return }
         healthChecker.checkOnce(checks: checks) { [weak self] ok in
             guard let self else { return }
@@ -154,7 +199,20 @@ final class ServiceManager {
         states[service.id] = .starting
         onStateChange()
 
-        let checks = service.effectiveHealthChecks().compactMap { URL(string: $0) }
+        if shouldAutoDetectScheme(for: service),
+           let host = service.effectiveHost(),
+           let port = service.port {
+            startSchemeDetection(
+                service: service,
+                host: host,
+                port: port,
+                appConfig: appConfig,
+                onStateChange: onStateChange
+            )
+            return
+        }
+
+        let checks = effectiveHealthChecks(for: service).compactMap { URL(string: $0) }
         if checks.isEmpty {
             markRunning(service: service, appConfig: appConfig, onStateChange: onStateChange)
         } else {
@@ -182,6 +240,7 @@ final class ServiceManager {
         }
 
         cancelHealthCheck(serviceId: service.id)
+        cancelSchemeDetection(serviceId: service.id)
         cancelHealthMonitor(serviceId: service.id)
         externalMonitoring.remove(service.id)
 
@@ -223,6 +282,7 @@ final class ServiceManager {
             processes.removeValue(forKey: id)
             states[id] = .stopped
             cancelHealthCheck(serviceId: id)
+            cancelSchemeDetection(serviceId: id)
             cancelHealthMonitor(serviceId: id)
             externalMonitoring.remove(id)
             closeLog(serviceId: id)
@@ -231,6 +291,7 @@ final class ServiceManager {
         let orphanStateIds = states.keys.filter { !validServiceIds.contains($0) }
         for id in orphanStateIds {
             cancelHealthCheck(serviceId: id)
+            cancelSchemeDetection(serviceId: id)
             cancelHealthMonitor(serviceId: id)
             externalMonitoring.remove(id)
             states.removeValue(forKey: id)
@@ -294,9 +355,21 @@ final class ServiceManager {
         return env
     }
 
+    func effectiveHealthChecks(for service: ServiceConfig) -> [String] {
+        service.effectiveHealthChecks(schemeOverride: resolvedScheme(for: service))
+    }
+
+    func effectiveOpenUrls(for service: ServiceConfig) -> [String] {
+        service.effectiveOpenUrls(schemeOverride: resolvedScheme(for: service))
+    }
+
+    func resolvedScheme(for service: ServiceConfig) -> String? {
+        explicitScheme(for: service) ?? schemeOverrides[service.id]
+    }
+
     private func portsForService(_ service: ServiceConfig) -> [Int] {
         var ports: [Int] = []
-        let urls = service.effectiveHealthChecks() + service.effectiveOpenUrls()
+        let urls = effectiveHealthChecks(for: service) + effectiveOpenUrls(for: service)
         for raw in urls {
             guard let url = URL(string: raw), let port = url.port else {
                 continue
@@ -304,6 +377,55 @@ final class ServiceManager {
             ports.append(port)
         }
         return Array(Set(ports)).sorted()
+    }
+
+    private func explicitScheme(for service: ServiceConfig) -> String? {
+        let candidates = (service.openUrls ?? []) + (service.healthChecks ?? [])
+        for raw in candidates {
+            if let scheme = URL(string: raw)?.scheme, !scheme.isEmpty {
+                return scheme
+            }
+        }
+        return nil
+    }
+
+    private func shouldAutoDetectScheme(for service: ServiceConfig) -> Bool {
+        let hasExplicitUrls = (service.openUrls?.isEmpty == false)
+        let hasExplicitChecks = (service.healthChecks?.isEmpty == false)
+        return !hasExplicitUrls && !hasExplicitChecks && service.port != nil
+    }
+
+    private func startSchemeDetection(
+        service: ServiceConfig,
+        host: String,
+        port: Int,
+        appConfig: AppConfig,
+        onStateChange: @escaping () -> Void
+    ) {
+        if schemeTokens[service.id] != nil {
+            return
+        }
+        let token = healthChecker.detectScheme(
+            host: host,
+            port: port,
+            timeout: appConfig.healthTimeoutSeconds,
+            interval: appConfig.healthIntervalSeconds
+        ) { [weak self] scheme in
+            guard let self else { return }
+            guard self.schemeTokens[service.id] == token else { return }
+            self.schemeTokens.removeValue(forKey: service.id)
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if let scheme {
+                    self.schemeOverrides[service.id] = scheme
+                    self.markRunning(service: service, appConfig: appConfig, onStateChange: onStateChange)
+                } else {
+                    self.markUnhealthy(service: service, appConfig: appConfig, onStateChange: onStateChange)
+                }
+            }
+        }
+        schemeTokens[service.id] = token
     }
 
     private func runStopCommand(_ command: String, workingDir: String?, env: [String: String]) {
@@ -332,7 +454,7 @@ final class ServiceManager {
             self.startHealthMonitor(service: service, appConfig: appConfig, onStateChange: onStateChange, allowExternal: true)
 
             if openUrls, service.autoOpen {
-                let urls = service.effectiveOpenUrls()
+                let urls = self.effectiveOpenUrls(for: service)
                 DispatchQueue.main.async {
                     for urlString in urls {
                         if let url = URL(string: urlString) {
@@ -356,7 +478,7 @@ final class ServiceManager {
         startHealthMonitor(service: service, appConfig: appConfig, onStateChange: onStateChange)
 
         if openUrls, service.autoOpen {
-            let urls = service.effectiveOpenUrls()
+            let urls = effectiveOpenUrls(for: service)
             DispatchQueue.main.async {
                 for urlString in urls {
                     if let url = URL(string: urlString) {
@@ -374,11 +496,19 @@ final class ServiceManager {
         }
     }
 
+    private func cancelSchemeDetection(serviceId: String) {
+        if let token = schemeTokens[serviceId] {
+            healthChecker.cancel(token)
+            schemeTokens.removeValue(forKey: serviceId)
+        }
+    }
+
     private func handleTermination(serviceId: String, process: Process, onStateChange: @escaping () -> Void) {
         if let current = processes[serviceId], current.processIdentifier == process.processIdentifier {
             processes.removeValue(forKey: serviceId)
         }
         cancelHealthCheck(serviceId: serviceId)
+        cancelSchemeDetection(serviceId: serviceId)
         cancelHealthMonitor(serviceId: serviceId)
         externalMonitoring.remove(serviceId)
         states[serviceId] = .stopped
@@ -405,7 +535,7 @@ final class ServiceManager {
     }
 
     private func startHealthMonitor(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void, allowExternal: Bool = false) {
-        let checks = service.effectiveHealthChecks().compactMap { URL(string: $0) }
+        let checks = effectiveHealthChecks(for: service).compactMap { URL(string: $0) }
         guard !checks.isEmpty else { return }
         if healthTimers[service.id] != nil {
             return
