@@ -16,7 +16,12 @@ struct AppConfig: Codable {
             version: currentVersion,
             services: [],
             defaultShell: "/bin/zsh",
-            pathAdditions: ["/opt/homebrew/bin", "/usr/local/bin", "/opt/podman/bin"],
+            pathAdditions: [
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/opt/podman/bin",
+                NSHomeDirectory() + "/.local/bin"
+            ],
             healthTimeoutSeconds: 30,
             healthIntervalSeconds: 1
         )

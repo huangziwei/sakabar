@@ -189,9 +189,7 @@ final class ServiceManager {
 
         process.environment = makeEnvironment(service: service, appConfig: appConfig)
 
-        if let workingDir = service.workingDir, !workingDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            process.currentDirectoryURL = URL(fileURLWithPath: workingDir)
-        }
+        process.currentDirectoryURL = effectiveWorkingDirectory(path: service.workingDir)
 
         return process
     }
@@ -208,7 +206,12 @@ final class ServiceManager {
 
     private func makeEnvironment(service: ServiceConfig, appConfig: AppConfig) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        let additions = appConfig.pathAdditions.joined(separator: ":")
+        var additionsList = appConfig.pathAdditions
+        let homeLocalBin = NSHomeDirectory() + "/.local/bin"
+        if !additionsList.contains(homeLocalBin) {
+            additionsList.append(homeLocalBin)
+        }
+        let additions = additionsList.joined(separator: ":")
         if !additions.isEmpty {
             let current = env["PATH"] ?? ""
             env["PATH"] = current.isEmpty ? additions : (additions + ":" + current)
@@ -237,11 +240,17 @@ final class ServiceManager {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-lc", command]
-        if let workingDir = workingDir, !workingDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            process.currentDirectoryURL = URL(fileURLWithPath: workingDir)
-        }
+        process.currentDirectoryURL = effectiveWorkingDirectory(path: workingDir)
         process.environment = env
         try? process.run()
+    }
+
+    private func effectiveWorkingDirectory(path: String?) -> URL {
+        if let workingDir = path?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !workingDir.isEmpty {
+            return URL(fileURLWithPath: workingDir)
+        }
+        return URL(fileURLWithPath: NSHomeDirectory())
     }
 
     private func markRunning(service: ServiceConfig, appConfig: AppConfig, onStateChange: @escaping () -> Void, openUrls: Bool = true) {
