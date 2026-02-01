@@ -1,8 +1,6 @@
 # Sakabar 酒場
 
-<p align="center">
-  <img src="Resources/AppIcon.png" width="96" alt="Sakabar icon">
-</p>
+<img src="Resources/AppIcon.png" width="128" alt="Sakabar icon">
 
 An macOS menubar app to manage local services.
 
