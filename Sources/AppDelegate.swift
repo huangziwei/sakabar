@@ -134,6 +134,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         logItem.representedObject = service.id
         submenu.addItem(logItem)
 
+        let editItem = MenuUI.menuItem(title: "Edit...", action: #selector(editService(_:)), target: self, symbolName: "pencil")
+        editItem.representedObject = service.id
+        submenu.addItem(editItem)
+
         submenu.addItem(NSMenuItem.separator())
 
         let infoItem = MenuUI.menuItem(title: "Info...", action: #selector(showInfo(_:)), target: self, symbolName: "info.circle")
@@ -193,6 +197,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         serviceManager.restart(service: service, appConfig: config) { [weak self] in
             self?.rebuildMenu()
         }
+    }
+
+    @objc private func editService(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let index = config.services.firstIndex(where: { $0.id == id }) else { return }
+        let service = config.services[index]
+        NSApp.activate(ignoringOtherApps: true)
+        guard let updated = UIFlows.promptEditService(service: service) else { return }
+        if let error = store.validate(service: updated) {
+            UIFlows.showError(message: error)
+            return
+        }
+        config.services[index] = updated
+        store.save(config)
+        rebuildMenu()
+        refreshExternalStates()
     }
 
     @objc private func showInfo(_ sender: NSMenuItem) {
