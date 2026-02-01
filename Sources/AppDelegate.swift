@@ -21,7 +21,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         rebuildMenu()
         refreshExternalStates()
-        maybePromptApplicationsSymlink()
     }
 
     private func rebuildMenu() {
@@ -406,26 +405,6 @@ private extension AppDelegate {
 
     func applicationsItemExists() -> Bool {
         FileManager.default.fileExists(atPath: applicationsInstallURL().path)
-    }
-
-    func maybePromptApplicationsSymlink() {
-        guard !config.didPromptApplicationsSymlink else { return }
-        guard shouldShowApplicationsSymlinkAction() else { return }
-
-        let alert = NSAlert()
-        alert.messageText = "Add to /Applications?"
-        alert.informativeText = "Create a symlink in /Applications for easier launching."
-        alert.addButton(withTitle: "Add Symlink")
-        alert.addButton(withTitle: "Not Now")
-        NSApp.activate(ignoringOtherApps: true)
-        let response = alert.runModal()
-
-        config.didPromptApplicationsSymlink = true
-        store.save(config)
-
-        if response == .alertFirstButtonReturn {
-            addApplicationsSymlink(nil)
-        }
     }
 
     @objc func addApplicationsSymlink(_ sender: NSMenuItem?) {

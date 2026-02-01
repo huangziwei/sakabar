@@ -8,7 +8,6 @@ struct AppConfig: Codable {
     var pathAdditions: [String]
     var healthTimeoutSeconds: TimeInterval
     var healthIntervalSeconds: TimeInterval
-    var didPromptApplicationsSymlink: Bool
 
     static let currentVersion = 1
 
@@ -24,8 +23,7 @@ struct AppConfig: Codable {
                 NSHomeDirectory() + "/.local/bin"
             ],
             healthTimeoutSeconds: 30,
-            healthIntervalSeconds: 1,
-            didPromptApplicationsSymlink: false
+            healthIntervalSeconds: 1
         )
     }
 
@@ -36,7 +34,6 @@ struct AppConfig: Codable {
         case pathAdditions
         case healthTimeoutSeconds
         case healthIntervalSeconds
-        case didPromptApplicationsSymlink
     }
 
     init(from decoder: Decoder) throws {
@@ -47,7 +44,6 @@ struct AppConfig: Codable {
         pathAdditions = try container.decodeIfPresent([String].self, forKey: .pathAdditions) ?? []
         healthTimeoutSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .healthTimeoutSeconds) ?? 30
         healthIntervalSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .healthIntervalSeconds) ?? 1
-        didPromptApplicationsSymlink = try container.decodeIfPresent(Bool.self, forKey: .didPromptApplicationsSymlink) ?? false
     }
 
     init(
@@ -56,8 +52,7 @@ struct AppConfig: Codable {
         defaultShell: String,
         pathAdditions: [String],
         healthTimeoutSeconds: TimeInterval,
-        healthIntervalSeconds: TimeInterval,
-        didPromptApplicationsSymlink: Bool
+        healthIntervalSeconds: TimeInterval
     ) {
         self.version = version
         self.services = services
@@ -65,7 +60,6 @@ struct AppConfig: Codable {
         self.pathAdditions = pathAdditions
         self.healthTimeoutSeconds = healthTimeoutSeconds
         self.healthIntervalSeconds = healthIntervalSeconds
-        self.didPromptApplicationsSymlink = didPromptApplicationsSymlink
     }
 }
 
