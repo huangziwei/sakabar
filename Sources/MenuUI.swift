@@ -60,6 +60,10 @@ enum MenuUI {
         return dotImage(color: color)
     }
 
+    static func runningIndicatorImage() -> NSImage {
+        dotImage(color: NSColor.systemGreen)
+    }
+
     static func serviceTitle(label: String, status: String) -> NSAttributedString {
         let titleAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13, weight: .medium),

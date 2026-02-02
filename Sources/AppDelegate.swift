@@ -2,6 +2,7 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
+    private var runningIndicatorView: NSImageView?
     private let store = ConfigStore.shared
     private var config: AppConfig
     private let serviceManager = ServiceManager()
@@ -85,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+        updateStatusBarIndicator()
     }
 
     private func refreshExternalStates(openUrls: Bool = false) {
@@ -362,6 +364,31 @@ private extension ServiceState {
 }
 
 private extension AppDelegate {
+    func updateStatusBarIndicator() {
+        guard let button = statusItem.button else { return }
+        let hasRunning = config.services.contains { serviceManager.state(for: $0.id) == .running }
+
+        if hasRunning {
+            if runningIndicatorView == nil {
+                let dot = NSImageView(image: MenuUI.runningIndicatorImage())
+                dot.translatesAutoresizingMaskIntoConstraints = false
+                button.addSubview(dot)
+
+                let dotSize: CGFloat = 7
+                NSLayoutConstraint.activate([
+                    dot.widthAnchor.constraint(equalToConstant: dotSize),
+                    dot.heightAnchor.constraint(equalToConstant: dotSize),
+                    dot.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -2),
+                    dot.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -2)
+                ])
+                runningIndicatorView = dot
+            }
+            runningIndicatorView?.isHidden = false
+        } else {
+            runningIndicatorView?.isHidden = true
+        }
+    }
+
     func menuTitleText() -> (name: String, version: String?) {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
