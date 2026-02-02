@@ -7,9 +7,9 @@ enum MenuUI {
         return image
     }()
 
-    static func headerItem(appName: String, summary: String) -> NSMenuItem {
+    static func headerItem(appName: String, version: String?, summary: String) -> NSMenuItem {
         let item = NSMenuItem()
-        item.view = MenuHeaderView(appName: appName, summary: summary)
+        item.view = MenuHeaderView(appName: appName, version: version, summary: summary)
         return item
     }
 
@@ -135,13 +135,24 @@ enum MenuUI {
 }
 
 final class MenuHeaderView: NSView {
-    init(appName: String, summary: String) {
+    init(appName: String, version: String?, summary: String) {
         let frame = NSRect(x: 0, y: 0, width: MenuUI.menuWidth, height: 48)
         super.init(frame: frame)
         autoresizingMask = [.width]
 
-        let titleLabel = NSTextField(labelWithString: appName)
-        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let titleAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+            .foregroundColor: NSColor.labelColor
+        ]
+        let summaryAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor
+        ]
+        let titleText = NSMutableAttributedString(string: appName, attributes: titleAttributes)
+        if let version, !version.isEmpty {
+            titleText.append(NSAttributedString(string: " v\(version)", attributes: summaryAttributes))
+        }
+        let titleLabel = NSTextField(labelWithAttributedString: titleText)
 
         let summaryLabel = NSTextField(labelWithString: summary)
         summaryLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
