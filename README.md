@@ -17,4 +17,4 @@ open build/Sakabar.app
 ```
 
 [^1]: I want to have a "bar" in the name, and somehow 酒場 already means a bar and has the sound "ba" (場) in it.
-[^2]: Actually, I want to say "homebrew" here—"A bar that serves homebrew services" fits very well—but [Homebrew](https://brew.sh) already offers [services](https://docs.brew.sh/Manpage#services-subcommand), so it’s better not to overload the term.
+[^2]: Actually, I want to say "homebrew" here—"A bar that serves homebrew services" fits very well—but [Homebrew](https://brew.sh) already offers [services](https://docs.brew.sh/Manpage#services-subcommand), so it’s better not to overload the term, especially when there's also a [menubar app](https://github.com/validatedev/BrewServicesManager) for `brew services`.
