@@ -2,6 +2,10 @@ import AppKit
 
 enum MenuUI {
     static let menuWidth: CGFloat = 320
+    private static let sectionHeaderSpacerImage: NSImage = {
+        let image = NSImage(size: NSSize(width: 16, height: 16))
+        return image
+    }()
 
     static func headerItem(appName: String, summary: String) -> NSMenuItem {
         let item = NSMenuItem()
@@ -12,6 +16,7 @@ enum MenuUI {
     static func sectionHeader(_ title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title.uppercased(), action: nil, keyEquivalent: "")
         item.isEnabled = false
+        item.image = sectionHeaderSpacerImage
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
             .foregroundColor: NSColor.secondaryLabelColor
@@ -142,22 +147,10 @@ final class MenuHeaderView: NSView {
         summaryLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         summaryLabel.textColor = NSColor.secondaryLabelColor
 
-        let iconView = NSImageView()
-        if let image = MenuUI.symbolImage(name: "gearshape.fill") {
-            iconView.image = image
-            iconView.contentTintColor = NSColor.secondaryLabelColor
-        }
-        iconView.isHidden = (iconView.image == nil)
-        iconView.setContentHuggingPriority(.required, for: .horizontal)
-
-        let titleStack = NSStackView(views: [iconView, titleLabel])
-        titleStack.spacing = 6
-        titleStack.alignment = .centerY
-
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let row = NSStackView(views: [titleStack, spacer, summaryLabel])
+        let row = NSStackView(views: [titleLabel, spacer, summaryLabel])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.translatesAutoresizingMaskIntoConstraints = false

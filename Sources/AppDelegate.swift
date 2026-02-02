@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        menu.addItem(MenuUI.headerItem(appName: "Sakabar", summary: menuSummaryText()))
+        menu.addItem(MenuUI.headerItem(appName: menuTitleText(), summary: menuSummaryText()))
         menu.addItem(NSMenuItem.separator())
 
         menu.addItem(MenuUI.sectionHeader("Services"))
@@ -361,6 +361,17 @@ private extension ServiceState {
 }
 
 private extension AppDelegate {
+    func menuTitleText() -> String {
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? "Sakabar"
+        guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              !version.isEmpty else {
+            return name
+        }
+        return "\(name) v\(version)"
+    }
+
     func menuSummaryText() -> String {
         guard !config.services.isEmpty else { return "No services configured" }
 
