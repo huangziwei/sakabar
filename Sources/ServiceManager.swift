@@ -201,6 +201,10 @@ final class ServiceManager {
             }
             process.terminate()
             processes.removeValue(forKey: service.id)
+            if canKillByPort {
+                // Reloaders/workers can outlive the tracked parent process.
+                killByPort(ports)
+            }
         } else if canKillByPort {
             killByPort(ports)
         }

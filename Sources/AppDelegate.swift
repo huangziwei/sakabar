@@ -1,11 +1,24 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private struct LanReachableCacheEntry {
+        let signature: String
+        let urls: [String]
+    }
+
     private var statusItem: NSStatusItem!
     private var runningIndicatorView: NSImageView?
     private let store = ConfigStore.shared
     private var config: AppConfig
     private let serviceManager = ServiceManager()
+    private var lanReachableCache: [String: LanReachableCacheEntry] = [:]
+    private var lanProbeSignaturesInFlight: [String: String] = [:]
+    private let lanProbeQueue = DispatchQueue(label: "sakabar.lan-probe", qos: .utility)
+    private lazy var lanProbeSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 1.2
+        return URLSession(configuration: configuration)
+    }()
 
     override init() {
         self.config = store.load()
@@ -25,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func rebuildMenu() {
+        pruneLanProbeState()
         let menu = NSMenu()
         menu.autoenablesItems = false
 
@@ -462,10 +476,11 @@ private extension AppDelegate {
         rebuildMenu()
     }
     func openUrlGroups(for service: ServiceConfig, state: ServiceState) -> (local: [String], lan: [String]) {
-        let localUrls = serviceManager.effectiveOpenUrls(for: service)
+        let localUrls = deduped(serviceManager.effectiveOpenUrls(for: service))
         let ports = portCandidates(for: service, state: state, localUrls: localUrls)
-        let lanUrls = lanUrls(for: service, ports: ports, localUrls: localUrls)
-        return (local: deduped(localUrls), lan: deduped(lanUrls))
+        let lanCandidates = deduped(lanUrls(for: service, ports: ports, localUrls: localUrls))
+        let reachableLanUrls = reachableLanUrls(for: service.id, candidates: lanCandidates)
+        return (local: localUrls, lan: reachableLanUrls)
     }
 
     func portCandidates(for service: ServiceConfig, state: ServiceState, localUrls: [String]) -> [Int] {
@@ -474,7 +489,8 @@ private extension AppDelegate {
         }
 
         let explicitUrls = service.openUrls ?? []
-        let parsedPorts = (explicitUrls + localUrls).compactMap { URL(string: $0)?.port }
+        let healthCheckUrls = serviceManager.effectiveHealthChecks(for: service)
+        let parsedPorts = (explicitUrls + healthCheckUrls + localUrls).compactMap { URL(string: $0)?.port }
         if !parsedPorts.isEmpty {
             return parsedPorts
         }
@@ -533,5 +549,105 @@ private extension AppDelegate {
             }
         }
         return result
+    }
+
+    func reachableLanUrls(for serviceId: String, candidates: [String]) -> [String] {
+        guard !candidates.isEmpty else {
+            lanReachableCache.removeValue(forKey: serviceId)
+            lanProbeSignaturesInFlight.removeValue(forKey: serviceId)
+            return []
+        }
+
+        let signature = lanSignature(for: candidates)
+        if let cache = lanReachableCache[serviceId], cache.signature == signature {
+            return cache.urls
+        }
+
+        scheduleLanReachabilityProbe(serviceId: serviceId, candidates: candidates, signature: signature)
+        return []
+    }
+
+    func lanSignature(for urls: [String]) -> String {
+        urls.joined(separator: "|")
+    }
+
+    func scheduleLanReachabilityProbe(serviceId: String, candidates: [String], signature: String) {
+        if lanProbeSignaturesInFlight[serviceId] == signature {
+            return
+        }
+
+        lanProbeSignaturesInFlight[serviceId] = signature
+        probeReachable(urls: candidates) { [weak self] reachable in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                guard self.lanProbeSignaturesInFlight[serviceId] == signature else {
+                    return
+                }
+                self.lanProbeSignaturesInFlight.removeValue(forKey: serviceId)
+                self.lanReachableCache[serviceId] = LanReachableCacheEntry(signature: signature, urls: reachable)
+                self.rebuildMenu()
+            }
+        }
+    }
+
+    func probeReachable(urls: [String], completion: @escaping ([String]) -> Void) {
+        let parsedUrls = urls.compactMap { URL(string: $0) }
+        guard !parsedUrls.isEmpty else {
+            completion([])
+            return
+        }
+
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var reachableSet = Set<String>()
+
+        for url in parsedUrls {
+            group.enter()
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 1.2
+
+            let task = lanProbeSession.dataTask(with: request) { [weak self] _, response, error in
+                defer { group.leave() }
+                guard let self else { return }
+
+                if response is HTTPURLResponse || self.isReachableTLSError(error) {
+                    lock.lock()
+                    reachableSet.insert(url.absoluteString)
+                    lock.unlock()
+                }
+            }
+            task.resume()
+        }
+
+        group.notify(queue: lanProbeQueue) {
+            completion(urls.filter { reachableSet.contains($0) })
+        }
+    }
+
+    func isReachableTLSError(_ error: Error?) -> Bool {
+        guard let nsError = error as NSError?, nsError.domain == NSURLErrorDomain else {
+            return false
+        }
+        let code = URLError.Code(rawValue: nsError.code)
+
+        switch code {
+        case .secureConnectionFailed,
+             .serverCertificateHasBadDate,
+             .serverCertificateUntrusted,
+             .serverCertificateHasUnknownRoot,
+             .serverCertificateNotYetValid,
+             .clientCertificateRejected,
+             .clientCertificateRequired:
+            return true
+        default:
+            return false
+        }
+    }
+
+    func pruneLanProbeState() {
+        let validServiceIds = Set(config.services.map(\.id))
+        lanReachableCache = lanReachableCache.filter { validServiceIds.contains($0.key) }
+        lanProbeSignaturesInFlight = lanProbeSignaturesInFlight.filter { validServiceIds.contains($0.key) }
     }
 }
