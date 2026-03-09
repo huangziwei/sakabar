@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private struct LanReachableCacheEntry {
@@ -94,6 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let symlinkItem = MenuUI.menuItem(title: "Add to /Applications", action: #selector(addApplicationsSymlink(_:)), target: self, symbolName: "link.badge.plus")
             menu.addItem(symlinkItem)
         }
+
+        let launchAtLoginItem = MenuUI.menuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), target: self, symbolName: "arrow.right.circle")
+        launchAtLoginItem.state = isLaunchAtLoginEnabled() ? .on : .off
+        menu.addItem(launchAtLoginItem)
 
         let quitItem = MenuUI.menuItem(title: "Quit", action: #selector(quitApp(_:)), target: self, symbolName: "power")
         quitItem.keyEquivalent = "q"
@@ -355,6 +360,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let id = sender.representedObject as? String,
               let url = serviceManager.logURL(for: id) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let service = SMAppService.mainApp
+        do {
+            if isLaunchAtLoginEnabled() {
+                try service.unregister()
+            } else {
+                try service.register()
+            }
+        } catch {
+            UIFlows.showError(message: "Failed to update login item: \(error.localizedDescription)")
+        }
+        rebuildMenu()
+    }
+
+    private func isLaunchAtLoginEnabled() -> Bool {
+        SMAppService.mainApp.status == .enabled
     }
 
     @objc private func quitApp(_ sender: NSMenuItem) {
