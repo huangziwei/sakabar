@@ -21,7 +21,7 @@ final class LogManager {
             fm.createFile(atPath: url.path, contents: Data())
         }
         let handle = try? FileHandle(forWritingTo: url)
-        _ = try? handle?.seekToEnd()
+        try? handle?.truncate(atOffset: 0)
         return (url, handle)
     }
 }
