@@ -30,7 +30,7 @@ fi
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS_DIR/Info.plist" >/dev/null 2>&1 || true
 
-IDENTITY=$(security find-identity -v -p codesigning | head -1 | sed 's/.*"\(.*\)".*/\1/')
+IDENTITY=$(security find-identity -v -p codesigning | grep '"' | head -1 | sed 's/.*"\(.*\)".*/\1/')
 if [ -n "$IDENTITY" ]; then
   codesign --force --sign "$IDENTITY" "$APP_DIR"
 else
